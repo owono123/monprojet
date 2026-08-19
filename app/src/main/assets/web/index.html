@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>IA Locale</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="statusDot"></span>
+      <span>IA Locale</span>
+    </div>
+    <button class="icon-btn" id="btnSettings" aria-label="Réglages">⚙</button>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="messages" id="messages">
+    <div class="empty" id="empty">
+      <h1>Assistant informatique</h1>
+      <p>Le modèle tourne sur ce téléphone. Aucune conversation ne quitte l'appareil.</p>
+    </div>
+  </main>
+
+  <form class="composer" id="composer">
+    <textarea id="input" rows="1" placeholder="Pose ta question…" autocomplete="off"></textarea>
+    <button type="submit" id="btnSend" aria-label="Envoyer">↑</button>
+    <button type="button" id="btnStop" aria-label="Arrêter" hidden>■</button>
+  </form>
+
+  <section class="panel" id="settings" hidden>
+    <div class="panel-head">
+      <h2>Réglages</h2>
+      <button class="icon-btn" id="btnCloseSettings" aria-label="Fermer">✕</button>
+    </div>
+    <div class="panel-body" id="settingsBody">
+      <p class="muted">Les réglages du modèle, des profils et de la recherche web
+        arrivent avec le moteur d'inférence.</p>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

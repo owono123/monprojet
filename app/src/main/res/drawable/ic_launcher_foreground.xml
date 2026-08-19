@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Puce stylisee : l'IA tourne sur l'appareil. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,40h28v28h-28z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,32h4v-8h-4z M58,32h4v-8h-4z M46,84h4v-8h-4z M58,84h4v-8h-4z
+                          M32,46h-8v4h8z M32,58h-8v4h8z M84,46h-8v4h8z M84,58h-8v4h8z" />
+</vector>
