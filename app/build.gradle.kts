@@ -15,6 +15,12 @@ android {
         versionName = "0.1.0"
     }
 
+    buildFeatures {
+        // Genere BuildConfig, desactive par defaut depuis AGP 8 : MainActivity s'en sert
+        // pour n'activer l'inspection de la WebView qu'en debogage.
+        buildConfig = true
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
