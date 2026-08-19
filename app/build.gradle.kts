@@ -11,8 +11,12 @@ android {
         applicationId = "com.monprojet.ia"
         minSdk = 28          // Android 9 (Pie)
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+
+        // Les bibliotheques x86 et x86_64 ne servent qu'aux emulateurs sur PC : 30,8 Mo
+        // de poids mort sur un telephone.
+        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
 
     buildFeatures {

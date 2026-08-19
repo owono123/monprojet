@@ -57,6 +57,7 @@ class ChatBridge(
 
     private var generationJob: Job? = null
     private var downloadJob: Job? = null
+    private var activationJob: Job? = null
 
     // --- Conversation -------------------------------------------------------------
 
@@ -158,6 +159,7 @@ class ChatBridge(
     @JavascriptInterface
     fun getState(): String = JSONObject()
         .put("modelReady", runtime.isReady)
+        .put("modelLoading", runtime.isLoading)
         .put("currentModelId", runtime.currentModelId ?: "")
         .put("ramMb", ModelCatalog.totalRamMb(context))
         .put("freeSpaceMb", store.freeSpaceBytes() / (1024 * 1024))
@@ -212,30 +214,74 @@ class ChatBridge(
 
     @JavascriptInterface
     fun deleteModel(modelId: String) {
-        if (runtime.currentModelId == modelId) runtime.unload()
-        store.delete(modelId)
-        channel.emit("state", JSONObject().put("state", getState()))
+        scope.launch(Dispatchers.Default) {
+            if (runtime.currentModelId == modelId) runtime.unload()
+            store.delete(modelId)
+            channel.emit("state", JSONObject().put("state", getState()))
+        }
     }
 
-    /** Charge un modele deja installe et le retient comme choix courant. */
+    /**
+     * Charge un modele deja installe et le retient comme choix courant.
+     *
+     * Un appui repete pendant le chargement ne relance rien : le travail en cours est
+     * conserve, et deux chargements simultanes fermeraient le moteur natif l'un sous
+     * l'autre.
+     */
     @JavascriptInterface
     fun activateModel(modelId: String) {
-        scope.launch(Dispatchers.Default) { activate(modelId) }
+        val current = activationJob
+        if (current != null && current.isActive) {
+            channel.emit("modelLoading", JSONObject().put("id", modelId))
+            return
+        }
+        activationJob = scope.launch(Dispatchers.Default) { activate(modelId) }
     }
 
     private suspend fun activate(modelId: String) {
-        val spec = ModelCatalog.byId(modelId) ?: return
+        val spec = ModelCatalog.byId(modelId)
+        if (spec == null) {
+            channel.emit(
+                "modelError",
+                JSONObject().put("id", modelId).put("message", "Modele inconnu : $modelId"),
+            )
+            return
+        }
         try {
             channel.emit("modelLoading", JSONObject().put("id", modelId))
             runtime.load(spec, store.fileFor(modelId))
             settings.modelId = modelId
             channel.emit("state", JSONObject().put("state", getState()))
-        } catch (e: Exception) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // Les exceptions natives de MediaPipe ont souvent un message nul : sans le nom
+            // de la classe, la cause et l'etat du fichier, l'erreur est inexploitable.
             channel.emit(
                 "modelError",
-                JSONObject().put("id", modelId).put("message", e.message ?: "Chargement impossible"),
+                JSONObject().put("id", modelId).put("message", describe(e, modelId)),
             )
         }
+    }
+
+    /** Message d'erreur assez precis pour distinguer fichier invalide, memoire et refus. */
+    private fun describe(e: Throwable, modelId: String): String {
+        val file = store.fileFor(modelId)
+        val size = if (file.isFile) "${file.length() / (1024 * 1024)} Mo" else "fichier absent"
+
+        val detail = buildString {
+            append(e.javaClass.simpleName)
+            e.message?.takeIf { it.isNotBlank() }?.let { append(" : ").append(it) }
+            var cause = e.cause
+            var depth = 0
+            while (cause != null && depth < 3) {
+                append(" | cause ").append(cause.javaClass.simpleName)
+                cause.message?.takeIf { it.isNotBlank() }?.let { append(" : ").append(it) }
+                cause = cause.cause
+                depth++
+            }
+        }
+        return "$detail (modele $modelId, $size)"
     }
 
     private fun emitDownload(id: String, phase: String, done: Long, total: Long, message: String) {
@@ -317,6 +363,7 @@ class ChatBridge(
     fun shutdown() {
         generationJob?.cancel()
         downloadJob?.cancel()
-        runtime.unload()
+        activationJob?.cancel()
+        runtime.closeNow()
     }
 }

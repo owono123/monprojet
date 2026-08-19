@@ -8,6 +8,8 @@ import com.monprojet.ia.data.Settings
 import com.monprojet.ia.model.ModelSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -26,16 +28,45 @@ class ModelRuntime(
     private var inference: LlmInference? = null
     private var loadedSpec: ModelSpec? = null
 
+    /**
+     * Un seul acces a la fois a l'objet natif. Sans ce verrou, deux appuis sur « Utiliser »
+     * lancent deux chargements : le second ferme le moteur natif pendant que le premier
+     * s'en sert encore.
+     */
+    private val lock = Mutex()
+
+    @Volatile
+    var isLoading: Boolean = false
+        private set
+
     val isReady: Boolean get() = inference != null
     val currentModelId: String? get() = loadedSpec?.id
 
     /**
-     * Charge un modele en memoire. Operation lourde (plusieurs secondes sur un appareil
-     * ancien) : a appeler hors du fil principal.
+     * Charge un modele en memoire. Operation lourde — des dizaines de secondes pour un
+     * fichier de plus d'un gigaoctet sur un appareil ancien.
+     *
+     * Recharger le modele deja actif ne fait rien : c'est le cas d'un appui repete.
      */
     suspend fun load(spec: ModelSpec, file: File) = withContext(Dispatchers.Default) {
-        require(file.isFile && file.length() > 0) { "Fichier de modele absent ou vide" }
-        unload()
+        lock.withLock {
+            if (loadedSpec?.id == spec.id && inference != null) {
+                Log.i(TAG, "Modele deja charge : ${spec.id}")
+                return@withLock
+            }
+            isLoading = true
+            try {
+                loadLocked(spec, file)
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    private fun loadLocked(spec: ModelSpec, file: File) {
+        require(file.isFile) { "Fichier de modele introuvable : ${file.absolutePath}" }
+        require(file.length() > 0) { "Fichier de modele vide : ${file.absolutePath}" }
+        unloadLocked()
 
         val backend = if (settings.backend == "GPU") {
             LlmInference.Backend.GPU
@@ -53,21 +84,26 @@ class ModelRuntime(
 
         inference = LlmInference.createFromOptions(context, options)
         loadedSpec = spec
-        Log.i(TAG, "Modele charge : ${spec.id} (${backend})")
+        Log.i(TAG, "Modele charge : ${spec.id} ($backend)")
     }
 
-    fun unload() {
+    suspend fun unload() = lock.withLock { unloadLocked() }
+
+    private fun unloadLocked() {
         runCatching { inference?.close() }
             .onFailure { Log.w(TAG, "Fermeture du modele", it) }
         inference = null
         loadedSpec = null
     }
 
+    /** Fermeture sans attendre le verrou, pour la destruction de l'Activity. */
+    fun closeNow() = unloadLocked()
+
     /**
      * Genere une reponse pour [prompt] deja formate, en appelant [onToken] au fil de la
      * generation. L'annulation de la coroutine interrompt la generation.
      */
-    suspend fun generate(prompt: String, onToken: (String) -> Unit) {
+    suspend fun generate(prompt: String, onToken: (String) -> Unit) = lock.withLock {
         val engine = inference
             ?: throw IllegalStateException(
                 "Aucun modele n'est charge. Ouvre les reglages pour en installer un."

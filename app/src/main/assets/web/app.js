@@ -203,11 +203,17 @@
     if (event === 'state') { applyState(JSON.parse(data.state)); return; }
 
     if (event === 'modelLoading') {
+      setModelsBusy(data.id);
       showBanner('Chargement du modèle en mémoire…');
       return;
     }
 
     if (event === 'modelError') {
+      setModelsBusy(null);
+      // Le bandeau est en haut de page : invisible quand on est défilé dans les réglages.
+      // Le message doit aussi apparaître dans la carte du modèle et en bas de l'écran.
+      showModelError(data.id, data.message);
+      toast('Chargement impossible');
       showBanner('Modèle non chargé : ' + data.message);
       return;
     }
@@ -467,11 +473,46 @@
       toast('Téléchargement terminé');
     } else if (data.phase === 'error') {
       progress.hidden = true;
-      addMessage('error', data.message);
+      showModelError(data.id, data.message);
+      toast('Téléchargement impossible');
       showBanner(data.message);
     } else if (data.phase === 'cancelled') {
       progress.hidden = true;
     }
+  }
+
+  // Pendant un chargement, tous les boutons de modèle deviennent inertes et celui du
+  // modèle concerné annonce ce qui se passe. Sans ça, l'interface semble ne rien faire et
+  // invite à réappuyer — ce qui lançait autant de chargements simultanés.
+  function setModelsBusy(loadingId) {
+    var cards = document.querySelectorAll('.model');
+    for (var i = 0; i < cards.length; i++) {
+      var buttons = cards[i].querySelectorAll('button');
+      for (var j = 0; j < buttons.length; j++) {
+        buttons[j].disabled = loadingId !== null;
+      }
+    }
+    if (loadingId === null) return;
+
+    var card = $('model-' + loadingId);
+    if (!card) return;
+    var first = card.querySelector('.model-actions button');
+    if (first) first.textContent = 'Chargement…';
+    var note = card.querySelector('.model-error');
+    if (note) note.remove();
+  }
+
+  function showModelError(modelId, message) {
+    var card = $('model-' + modelId);
+    if (!card) return;
+    var note = card.querySelector('.model-error');
+    if (!note) {
+      note = document.createElement('p');
+      note.className = 'model-error';
+      card.appendChild(note);
+    }
+    note.textContent = message;
+    card.scrollIntoView({ block: 'nearest' });
   }
 
   $('btnImportModel').addEventListener('click', function () { window.Android.importModel(); });
