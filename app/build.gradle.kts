@@ -48,4 +48,8 @@ dependencies {
     implementation(libs.androidx.activity)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
+
+    // Moteur d'inference local. Google lui a succede LiteRT-LM, qui exige Android 12 :
+    // MediaPipe reste le seul runtime officiel compatible Android 9.
+    implementation(libs.mediapipe.tasks.genai)
 }

@@ -8,9 +8,10 @@
 </head>
 <body>
   <header class="topbar">
+    <button class="icon-btn" id="btnHistory" aria-label="Conversations">☰</button>
     <div class="brand">
       <span class="dot" id="statusDot"></span>
-      <span>IA Locale</span>
+      <span id="brandLabel">IA Locale</span>
     </div>
     <button class="icon-btn" id="btnSettings" aria-label="Réglages">⚙</button>
   </header>
@@ -30,14 +31,110 @@
     <button type="button" id="btnStop" aria-label="Arrêter" hidden>■</button>
   </form>
 
+  <!-- Conversations ------------------------------------------------------------ -->
+  <section class="panel" id="history" hidden>
+    <div class="panel-head">
+      <h2>Conversations</h2>
+      <button class="icon-btn" data-close="history" aria-label="Fermer">✕</button>
+    </div>
+    <div class="panel-body">
+      <button class="btn primary block" id="btnNewChat">Nouvelle conversation</button>
+      <ul class="list" id="conversationList"></ul>
+    </div>
+  </section>
+
+  <!-- Réglages ----------------------------------------------------------------- -->
   <section class="panel" id="settings" hidden>
     <div class="panel-head">
       <h2>Réglages</h2>
-      <button class="icon-btn" id="btnCloseSettings" aria-label="Fermer">✕</button>
+      <button class="icon-btn" data-close="settings" aria-label="Fermer">✕</button>
     </div>
-    <div class="panel-body" id="settingsBody">
-      <p class="muted">Les réglages du modèle, des profils et de la recherche web
-        arrivent avec le moteur d'inférence.</p>
+    <div class="panel-body">
+
+      <section class="group">
+        <h3>Modèle</h3>
+        <p class="muted" id="deviceInfo"></p>
+        <div id="modelList"></div>
+        <button class="btn block" id="btnImportModel">Importer un fichier .task</button>
+        <p class="hint">À utiliser si le téléchargement échoue, ou si tu as récupéré le
+          fichier sur un ordinateur.</p>
+      </section>
+
+      <section class="group">
+        <h3>Profil</h3>
+        <select id="personaSelect"></select>
+        <p class="hint" id="personaHint"></p>
+        <label class="field">
+          <span>Prompt système</span>
+          <textarea id="systemPrompt" rows="8"
+            placeholder="Laisse vide pour utiliser celui du profil."></textarea>
+        </label>
+        <button class="btn block" id="btnResetPrompt">Revenir au prompt du profil</button>
+      </section>
+
+      <section class="group">
+        <h3>Réflexion</h3>
+        <label class="field">
+          <span>Passes de critique : <b id="passesValue">0</b></span>
+          <input type="range" id="passes" min="0" max="3" step="1">
+        </label>
+        <p class="hint">Le modèle rédige un plan, un brouillon, puis se relit. Chaque passe
+          est une génération complète : à 3, une réponse prend environ cinq fois plus de
+          temps. Sur un téléphone ancien, c'est long.</p>
+      </section>
+
+      <section class="group">
+        <h3>Recherche web</h3>
+        <label class="switch">
+          <input type="checkbox" id="webSearch">
+          <span>Activer la recherche web</span>
+        </label>
+        <p class="hint">Éteinte, l'application ne contacte aucun serveur pendant une
+          conversation. Allumée, ta question est envoyée à un moteur de recherche.</p>
+        <label class="field">
+          <span>Instance SearXNG (facultatif)</span>
+          <input type="url" id="searxUrl" placeholder="https://searx.exemple.org">
+        </label>
+      </section>
+
+      <section class="group">
+        <h3>Génération</h3>
+        <label class="field">
+          <span>Température : <b id="temperatureValue"></b></span>
+          <input type="range" id="temperature" min="0" max="1.5" step="0.05">
+        </label>
+        <label class="field">
+          <span>Tokens maximum : <b id="maxTokensValue"></b></span>
+          <input type="range" id="maxTokens" min="256" max="4096" step="256">
+        </label>
+        <p class="hint">Une valeur élevée consomme plus de mémoire au chargement du modèle.
+          Le changement s'applique au prochain chargement.</p>
+      </section>
+
+      <section class="group">
+        <h3>Avancé</h3>
+        <label class="field">
+          <span>Format de dialogue</span>
+          <select id="promptTemplate">
+            <option value="">Celui du modèle</option>
+            <option value="chatml">ChatML (Qwen, TinyLlama…)</option>
+            <option value="gemma">Gemma</option>
+            <option value="aucun">Aucun</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Calcul</span>
+          <select id="backend">
+            <option value="CPU">Processeur (recommandé)</option>
+            <option value="GPU">Processeur graphique</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Jeton Hugging Face (modèles sous licence)</span>
+          <input type="password" id="hfToken" placeholder="hf_…">
+        </label>
+      </section>
+
     </div>
   </section>
 
