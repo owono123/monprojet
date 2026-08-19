@@ -34,9 +34,11 @@ jobs:
         run: ./gradlew assembleDebug --console=plain
 
       - name: Renommer l'APK
+        # Nom fixe : l'adresse de telechargement de la pre-release reste ainsi la meme
+        # d'une version a l'autre, ce qui est plus commode depuis un telephone.
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk "artifacts/ia-locale-${GITHUB_SHA::7}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/ia-locale.apk
 
       - name: Publier l'APK en artefact
         uses: actions/upload-artifact@v4
@@ -46,13 +48,29 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # Sur un tag v*, l'APK est joint a une Release : c'est le lien a ouvrir depuis le
-      # navigateur du telephone pour l'installer.
+      # Pre-release « dev » remise a jour a chaque push : elle donne une adresse de
+      # telechargement stable, ouvrable directement depuis le navigateur du telephone.
+      - name: Publier la pre-release de developpement
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete dev --yes --cleanup-tag || true
+          gh release create dev artifacts/ia-locale.apk \
+            --prerelease \
+            --target "${GITHUB_SHA}" \
+            --title "IA Locale (developpement)" \
+            --notes "Compile depuis ${GITHUB_REF_NAME} (${GITHUB_SHA}).
+
+          APK signe avec la cle de debogage : autorise l'installation depuis cette source
+          dans les parametres de securite du telephone avant d'ouvrir le fichier."
+
+      # Sur un tag v*, l'APK est joint a une Release stable.
       - name: Creer la Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" artifacts/*.apk \
+          gh release create "${GITHUB_REF_NAME}" artifacts/ia-locale.apk \
             --title "IA Locale ${GITHUB_REF_NAME}" \
-            --notes "APK signe avec la cle de debogage. Active \"Sources inconnues\" sur le telephone pour l'installer."
+            --notes "APK signe avec la cle de debogage. Autorise l'installation depuis cette source sur le telephone."

@@ -28,13 +28,17 @@ L'inference est locale. Deux fonctions seulement touchent Internet :
 
 ## Installer l'APK sur le telephone
 
-L'APK est compile par GitHub Actions, pas sur la machine de developpement.
+L'APK est compile par GitHub Actions, pas sur la machine de developpement. Chaque push
+met a jour une pre-release `dev`, dont l'adresse ne change pas :
 
-1. Ouvrir l'onglet **Actions** du depot, choisir la derniere execution reussie.
-2. Telecharger l'artefact `ia-locale-apk` (ou, sur une version taguee `v*`, prendre l'APK
-   joint a la **Release** — c'est le plus simple depuis le navigateur du telephone).
-3. Sur le telephone : Parametres > Securite > autoriser l'installation depuis cette source,
-   puis ouvrir le fichier `.apk` telecharge.
+**https://github.com/owono123/monprojet/releases/download/dev/ia-locale.apk**
+
+1. Ouvrir ce lien depuis le navigateur du telephone.
+2. Parametres > Securite : autoriser l'installation depuis cette source.
+3. Ouvrir le fichier `.apk` telecharge.
+
+Les executions de l'onglet **Actions** conservent aussi l'APK en artefact, si besoin
+d'une version precise.
 
 L'APK est signe avec la cle de debogage : il s'installe directement, mais ne peut pas etre
 publie sur le Play Store en l'etat.
@@ -48,6 +52,25 @@ publie sur le Play Store en l'etat.
 
 Necessite le SDK Android et un JDK 17.
 
+## Fonctionnement
+
+Au premier lancement, l'application mesure la memoire de l'appareil et conseille un
+modele. Le telechargement reprend la ou il s'etait arrete en cas de coupure ; un fichier
+`.task` recupere par un autre moyen peut aussi etre importe depuis le stockage du
+telephone.
+
+Les reglages permettent de changer de modele, de reecrire entierement le prompt systeme,
+de choisir un profil (expert, auditeur defensif, developpeur), de regler la temperature,
+et d'activer le **mode reflexion** : le modele redige un plan, un brouillon, se relit puis
+se corrige. Chaque passe est une generation complete, donc trois passes prennent environ
+cinq fois plus de temps qu'une reponse directe — le reglage descend a zero.
+
+Le profil developpeur ecrit chaque fichier dans un bloc annote de son chemin ; le bouton
+« Exporter en ZIP » reconstruit alors l'arborescence en archive partageable. Compiler un
+APK depuis le telephone n'est pas possible : il n'existe pas de chaine de compilation
+Android executable sous Android 9. L'archive est faite pour etre poussee sur un depot, ou
+une integration continue produit l'APK — exactement comme ce projet.
+
 ## Structure
 
 ```
@@ -55,7 +78,11 @@ app/src/main/
   java/com/monprojet/ia/
     MainActivity.kt        Activity hote : WebView + pont JavaScript
     bridge/                surface appelee depuis la page (envoi, arret, etat)
-    engine/                moteur d'inference local
+    engine/                inference locale (MediaPipe) et reflexion multi-passes
+    model/                 catalogue, telechargement et stockage des modeles
+    search/                recherche web facultative
+    export/                reconstruction et archivage d'un projet
+    data/                  reglages, profils, historique des conversations
   assets/web/              interface de chat (HTML/CSS/JS, aucune ressource distante)
 .github/workflows/         compilation de l'APK
 ```
