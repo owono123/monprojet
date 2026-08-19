@@ -9,4 +9,6 @@
 .cxx/
 *.apk
 *.aab
+# La cle de debogage est volontairement versionnee : voir app/build.gradle.kts.
 *.keystore
+!app/debug.keystore

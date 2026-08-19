@@ -19,6 +19,19 @@ android {
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
 
+    // Cle de signature fixe, versionnee avec le projet. Sans elle, chaque execution de
+    // l'integration continue genere une cle differente : Android refuse alors la mise a
+    // jour pour cause de signature incompatible, et il faut desinstaller — ce qui efface
+    // le modele et impose de retelecharger plus d'un gigaoctet a chaque version.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildFeatures {
         // Genere BuildConfig, desactive par defaut depuis AGP 8 : MainActivity s'en sert
         // pour n'activer l'inspection de la WebView qu'en debogage.
