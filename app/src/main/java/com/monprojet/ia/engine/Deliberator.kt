@@ -22,20 +22,29 @@ class Deliberator(private val runtime: ModelRuntime) {
 
     suspend fun run(
         systemPrompt: String,
+        history: List<Turn>,
         userMessage: String,
         passes: Int,
         sink: DeliberationSink,
     ) {
+        val exchange = history + Turn(ROLE_USER, userMessage)
+
         if (passes <= 0) {
-            runtime.generate(runtime.formatPrompt(systemPrompt, userMessage)) { sink.onAnswerToken(it) }
+            runtime.generate(runtime.formatPrompt(systemPrompt, exchange)) { sink.onAnswerToken(it) }
             return
         }
 
         sink.onStepStart("Plan")
         val plan = collect(systemPrompt, PLAN_INSTRUCTION.format(userMessage), sink)
 
+        // Le brouillon et la reponse finale voient la conversation entiere ; le plan et
+        // la critique sont des taches isolees, qui n'ont besoin que de la question.
         sink.onStepStart("Brouillon")
-        var answer = collect(systemPrompt, DRAFT_INSTRUCTION.format(userMessage, plan), sink)
+        var answer = collect(
+            systemPrompt,
+            history + Turn(ROLE_USER, DRAFT_INSTRUCTION.format(userMessage, plan)),
+            sink,
+        )
 
         repeat(passes) { index ->
             sink.onStepStart("Critique ${index + 1}")
@@ -47,21 +56,30 @@ class Deliberator(private val runtime: ModelRuntime) {
 
             val isLast = index == passes - 1
             sink.onStepStart(if (isLast) "Reponse finale" else "Reecriture ${index + 1}")
+            val revision = history +
+                Turn(ROLE_USER, REVISE_INSTRUCTION.format(userMessage, answer, critique))
+
             answer = if (isLast) {
                 buildString {
-                    runtime.generate(
-                        runtime.formatPrompt(
-                            systemPrompt,
-                            REVISE_INSTRUCTION.format(userMessage, answer, critique),
-                        )
-                    ) { token ->
+                    runtime.generate(runtime.formatPrompt(systemPrompt, revision)) { token ->
                         append(token)
                         sink.onAnswerToken(token)
                     }
                 }
             } else {
-                collect(systemPrompt, REVISE_INSTRUCTION.format(userMessage, answer, critique), sink)
+                collect(systemPrompt, revision, sink)
             }
+        }
+    }
+
+    private suspend fun collect(
+        systemPrompt: String,
+        turns: List<Turn>,
+        sink: DeliberationSink,
+    ): String = buildString {
+        runtime.generate(runtime.formatPrompt(systemPrompt, turns)) { token ->
+            append(token)
+            sink.onStepToken(token)
         }
     }
 
@@ -69,12 +87,7 @@ class Deliberator(private val runtime: ModelRuntime) {
         systemPrompt: String,
         instruction: String,
         sink: DeliberationSink,
-    ): String = buildString {
-        runtime.generate(runtime.formatPrompt(systemPrompt, instruction)) { token ->
-            append(token)
-            sink.onStepToken(token)
-        }
-    }
+    ): String = collect(systemPrompt, listOf(Turn(ROLE_USER, instruction)), sink)
 
     private companion object {
         const val PLAN_INSTRUCTION =

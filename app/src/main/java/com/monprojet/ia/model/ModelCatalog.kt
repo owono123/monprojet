@@ -2,14 +2,15 @@ package com.monprojet.ia.model
 
 import android.app.ActivityManager
 import android.content.Context
+import com.monprojet.ia.engine.ChatFormat
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * Un modele telechargeable au format .task de MediaPipe.
  *
- * [promptTemplate] applique le format de dialogue attendu par le modele ; sans lui, un
- * modele instruit repond souvent a cote. Les marqueurs {system} et {user} y sont remplaces.
+ * [format] designe la syntaxe de dialogue attendue par le modele ; sans elle, un modele
+ * instruit repond souvent a cote.
  */
 data class ModelSpec(
     val id: String,
@@ -18,17 +19,11 @@ data class ModelSpec(
     val approxBytes: Long,
     val minRamMb: Int,
     val gated: Boolean,
-    val promptTemplate: String,
+    val format: ChatFormat,
     val note: String,
 )
 
 object ModelCatalog {
-
-    private const val CHATML = "<|im_start|>system\n{system}<|im_end|>\n" +
-        "<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"
-
-    private const val GEMMA = "<start_of_turn>user\n{system}\n\n{user}<end_of_turn>\n" +
-        "<start_of_turn>model\n"
 
     val ALL: List<ModelSpec> = listOf(
         ModelSpec(
@@ -38,7 +33,7 @@ object ModelCatalog {
             approxBytes = 550L * 1024 * 1024,
             minRamMb = 2048,
             gated = false,
-            promptTemplate = CHATML,
+            format = ChatFormat.CHATML,
             note = "Le plus leger. A privilegier en dessous de 4 Go de RAM.",
         ),
         ModelSpec(
@@ -48,7 +43,7 @@ object ModelCatalog {
             approxBytes = 1700L * 1024 * 1024,
             minRamMb = 4096,
             gated = false,
-            promptTemplate = CHATML,
+            format = ChatFormat.CHATML,
             note = "Nettement meilleur en code et en raisonnement, mais plus lent.",
         ),
         ModelSpec(
@@ -58,7 +53,7 @@ object ModelCatalog {
             approxBytes = 560L * 1024 * 1024,
             minRamMb = 3072,
             gated = true,
-            promptTemplate = GEMMA,
+            format = ChatFormat.GEMMA,
             note = "Necessite un jeton Hugging Face et l'acceptation de la licence Gemma.",
         ),
     )
@@ -75,7 +70,7 @@ object ModelCatalog {
         gated = false,
         // Le format de dialogue d'un fichier apporte par l'utilisateur est inconnu :
         // il se regle a la main dans les reglages.
-        promptTemplate = CHATML,
+        format = ChatFormat.CHATML,
         note = "Fichier .task fourni par toi. Verifie le format de dialogue dans les reglages.",
     )
 

@@ -104,29 +104,93 @@ class ModelRuntime(
     }
 
     /**
-     * Applique le format de dialogue attendu par le modele. Sans lui, un modele instruit
-     * repond souvent a cote : les marqueurs de tour font partie de son entrainement.
+     * Applique le format de dialogue attendu par le modele a un echange complet. Sans les
+     * marqueurs de tour, un modele instruit repond souvent a cote : ils font partie de son
+     * entrainement. Et sans les tours precedents, il oublie ce qui vient d'etre dit — la
+     * session d'inference est recreee a chaque reponse.
      */
-    fun formatPrompt(systemPrompt: String, userMessage: String): String {
-        val template = when (settings.promptTemplate) {
-            "chatml" -> CHATML
-            "gemma" -> GEMMA
-            "aucun" -> null
-            else -> loadedSpec?.promptTemplate
-        } ?: return "$systemPrompt\n\n$userMessage"
+    fun formatPrompt(systemPrompt: String, turns: List<Turn>): String {
+        val format = when (settings.promptTemplate) {
+            "chatml" -> ChatFormat.CHATML
+            "gemma" -> ChatFormat.GEMMA
+            "aucun" -> ChatFormat.PLAIN
+            else -> loadedSpec?.format ?: ChatFormat.PLAIN
+        }
 
-        return template
-            .replace("{system}", systemPrompt)
-            .replace("{user}", userMessage)
+        val kept = trimToBudget(turns)
+
+        return when (format) {
+            ChatFormat.CHATML -> buildString {
+                append("<|im_start|>system\n").append(systemPrompt).append("<|im_end|>\n")
+                for (turn in kept) {
+                    val role = if (turn.role == ROLE_USER) "user" else "assistant"
+                    append("<|im_start|>").append(role).append("\n")
+                    append(turn.content).append("<|im_end|>\n")
+                }
+                append("<|im_start|>assistant\n")
+            }
+
+            ChatFormat.GEMMA -> buildString {
+                // Gemma n'a pas de tour systeme : la consigne est placee en tete du premier
+                // message de l'utilisateur.
+                var systemPlaced = false
+                for (turn in kept) {
+                    if (turn.role == ROLE_USER) {
+                        append("<start_of_turn>user\n")
+                        if (!systemPlaced) {
+                            append(systemPrompt).append("\n\n")
+                            systemPlaced = true
+                        }
+                        append(turn.content).append("<end_of_turn>\n")
+                    } else {
+                        append("<start_of_turn>model\n")
+                        append(turn.content).append("<end_of_turn>\n")
+                    }
+                }
+                append("<start_of_turn>model\n")
+            }
+
+            ChatFormat.PLAIN -> buildString {
+                append(systemPrompt).append("\n\n")
+                for (turn in kept) {
+                    append(if (turn.role == ROLE_USER) "Question : " else "Reponse : ")
+                    append(turn.content).append("\n\n")
+                }
+                append("Reponse : ")
+            }
+        }
+    }
+
+    /** Raccourci pour une consigne isolee, sans historique. */
+    fun formatPrompt(systemPrompt: String, userMessage: String): String =
+        formatPrompt(systemPrompt, listOf(Turn(ROLE_USER, userMessage)))
+
+    /**
+     * Ne garde que la fin de la conversation. Le contexte du modele est court et il est
+     * fixe au chargement : deborder ne provoque pas une erreur claire mais une reponse
+     * tronquee ou incoherente. Le dernier message, celui auquel il faut repondre, est
+     * toujours conserve.
+     */
+    private fun trimToBudget(turns: List<Turn>): List<Turn> {
+        if (turns.isEmpty()) return turns
+
+        // Environ quatre caracteres par token, et on laisse la moitie du contexte pour la
+        // reponse elle-meme.
+        val budget = settings.maxTokens * 4 / 2
+        val kept = ArrayDeque<Turn>()
+        var used = 0
+
+        for (turn in turns.asReversed()) {
+            val cost = turn.content.length + MARKER_COST
+            if (kept.isNotEmpty() && used + cost > budget) break
+            kept.addFirst(turn)
+            used += cost
+        }
+        return kept
     }
 
     private companion object {
         const val TAG = "ModelRuntime"
-
-        const val CHATML = "<|im_start|>system\n{system}<|im_end|>\n" +
-            "<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"
-
-        const val GEMMA = "<start_of_turn>user\n{system}\n\n{user}<end_of_turn>\n" +
-            "<start_of_turn>model\n"
+        const val MARKER_COST = 16
     }
 }

@@ -8,6 +8,9 @@ import com.monprojet.ia.data.Settings
 import com.monprojet.ia.engine.DeliberationSink
 import com.monprojet.ia.engine.Deliberator
 import com.monprojet.ia.engine.ModelRuntime
+import com.monprojet.ia.engine.ROLE_ASSISTANT
+import com.monprojet.ia.engine.ROLE_USER
+import com.monprojet.ia.engine.Turn
 import com.monprojet.ia.export.ProjectExporter
 import com.monprojet.ia.model.ModelCatalog
 import com.monprojet.ia.model.ModelDownloader
@@ -57,8 +60,13 @@ class ChatBridge(
 
     // --- Conversation -------------------------------------------------------------
 
+    /**
+     * @param historyJson tours precedents de la conversation, au format
+     *   `[{"role":"user","content":"…"}]`. Sans eux le modele repartirait de zero a chaque
+     *   message : la session d'inference est recreee pour chaque reponse.
+     */
     @JavascriptInterface
-    fun send(requestId: String, prompt: String) {
+    fun send(requestId: String, prompt: String, historyJson: String) {
         // Une seule generation a la fois : le modele local n'a pas la memoire pour deux.
         generationJob?.cancel()
         generationJob = scope.launch(Dispatchers.Default) {
@@ -93,6 +101,7 @@ class ChatBridge(
 
                 deliberator.run(
                     systemPrompt = settings.effectiveSystemPrompt(),
+                    history = parseHistory(historyJson),
                     userMessage = question,
                     passes = settings.deliberationPasses,
                     sink = object : DeliberationSink {
@@ -128,6 +137,20 @@ class ChatBridge(
     @JavascriptInterface
     fun stop() {
         generationJob?.cancel()
+    }
+
+    private fun parseHistory(json: String): List<Turn> {
+        if (json.isBlank()) return emptyList()
+        val array = runCatching { JSONArray(json) }.getOrNull() ?: return emptyList()
+        val turns = mutableListOf<Turn>()
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            val content = item.optString("content")
+            if (content.isEmpty()) continue
+            val role = if (item.optString("role") == ROLE_ASSISTANT) ROLE_ASSISTANT else ROLE_USER
+            turns += Turn(role, content)
+        }
+        return turns
     }
 
     // --- Etat et reglages ---------------------------------------------------------

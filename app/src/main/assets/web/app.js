@@ -251,6 +251,9 @@
     if (!text || pending) return;
 
     addMessage('user', text);
+    // L'historique part avant que le nouveau message ne s'y ajoute : le pont recoit les
+    // tours precedents d'un cote et la question de l'autre.
+    var history = JSON.stringify(conversation.messages);
     conversation.messages.push({ role: 'user', content: text });
     input.value = '';
     autosize();
@@ -262,7 +265,7 @@
 
     pending = { id: String(Date.now()), node: node, caret: caret, text: '', reasoning: null };
     setGenerating(true);
-    window.Android.send(pending.id, text);
+    window.Android.send(pending.id, text, history);
   });
 
   btnStop.addEventListener('click', function () { window.Android.stop(); });
@@ -348,11 +351,10 @@
     messages.textContent = '';
     for (var i = 0; i < conversation.messages.length; i++) {
       var m = conversation.messages[i];
-      var node = addMessage(m.role, m.content);
+      addMessage(m.role, m.content);
       if (m.role === 'assistant') {
         (function (content) { addTools(function () { return content; }); })(m.content);
       }
-      void node;
     }
     $('history').hidden = true;
   }
