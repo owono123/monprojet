@@ -1,0 +1,57 @@
+; Projet Godot — Foot 2026
+; Fichier texte : c'est ce qui permet de developper le jeu entier sans jamais
+; ouvrir l'editeur Godot, depuis un depot pousse par integration continue.
+
+config_version=5
+
+[application]
+
+config/name="Foot 2026"
+config/description="Jeu de football hors-ligne, sans publicite ni micro-transaction."
+run/main_scene="res://src/principal.tscn"
+config/features=PackedStringArray("4.7", "Mobile")
+config/icon="res://icone.svg"
+boot_splash/show_image=false
+boot_splash/bg_color=Color(0.03, 0.06, 0.04, 1)
+
+[display]
+
+; Resolution de reference. Le Note 8 est en 2960x1440 : rendre a cette
+; definition couterait le double de pixels pour un gain invisible a bout de
+; bras. On rend en 1280x720 et on etire.
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="viewport"
+window/stretch/aspect="expand"
+; 6 = paysage, capteur desactive (le telephone ne bascule pas en pleine action)
+window/handheld/orientation=6
+window/vsync/vsync_mode=1
+
+[input_devices]
+
+; L'inverse du reglage par defaut : la souris fabrique des evenements tactiles,
+; et non le contraire. Un seul chemin de code traite les appuis, que le jeu
+; tourne sur le telephone ou sur un ordinateur pendant la mise au point.
+pointing/emulate_touch_from_mouse=true
+pointing/emulate_mouse_from_touch=false
+
+[physics]
+
+; La simulation du match n'utilise pas le moteur physique de Godot : elle a son
+; propre pas fixe. Ce reglage ne sert qu'aux rares corps physiques du decor.
+common/physics_ticks_per_second=60
+
+[rendering]
+
+; Vulkan quand le pilote suit, repli automatique sur OpenGL ES 3.0 sinon.
+; Le compteur a l'ecran indique lequel des deux tourne reellement.
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="mobile"
+rendering_device/fallback_to_opengl3=true
+; Rendu 3D a 80 % puis remise a l'echelle : ~35 % de pixels en moins.
+scaling_3d/mode=0
+scaling_3d/scale=0.8
+anti_aliasing/quality/msaa_3d=1
+textures/vram_compression/import_etc2_astc=true
+lights_and_shadows/directional_shadow/size=2048
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=1

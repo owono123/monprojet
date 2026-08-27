@@ -1,0 +1,6 @@
+# Cache d'import de Godot : reconstruit a chaque compilation.
+.godot/
+# Captures de controle : produites par les tests, jamais versionnees.
+captures/
+# Sortie d'export.
+sortie/

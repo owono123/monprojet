@@ -9,6 +9,9 @@
 .cxx/
 *.apk
 *.aab
-# La cle de debogage est volontairement versionnee : voir app/build.gradle.kts.
+# Les cles de debogage sont volontairement versionnees : voir app/build.gradle.kts
+# et foot/export_presets.cfg. Une cle fixe garde la meme signature d'une version
+# a l'autre, sans quoi Android refuse d'installer les mises a jour par-dessus.
 *.keystore
 !app/debug.keystore
+!foot/debug.keystore

@@ -4,6 +4,12 @@ on:
   push:
     branches: ["**"]
     tags: ["v*"]
+    # Le jeu de football vit dans foot/ et a sa propre compilation : sans ce
+    # filtre, chaque envoi cote jeu recompilerait IA Locale et republierait sa
+    # pre-release « dev » pour rien.
+    paths-ignore:
+      - "foot/**"
+      - ".github/workflows/foot-apk.yml"
   pull_request:
   workflow_dispatch:
 

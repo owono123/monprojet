@@ -1,0 +1,160 @@
+name: Compilation APK - Foot 2026
+
+# Le jeu est ecrit ici mais compile ailleurs : il n'existe pas de chaine de
+# compilation Android executable sur un telephone. GitHub fournit la machine,
+# et l'APK atterrit a une adresse fixe ouvrable depuis le navigateur du
+# telephone. C'est ce qui rend le projet possible sans ordinateur.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "foot/**"
+      - ".github/workflows/foot-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Version epinglee : les gabarits d'export doivent correspondre exactement a
+  # l'editeur. Si ce numero devient introuvable, l'etape ci-dessous retombe
+  # automatiquement sur la derniere version stable et l'annonce dans le journal.
+  VERSION_GODOT: "4.7.2-stable"
+  PROJET: foot
+
+jobs:
+  compiler:
+    name: Export Android
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer le JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Installer le SDK Android
+        uses: android-actions/setup-android@v3
+
+      - name: Recuperer Godot et ses gabarits d'export
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot-builds/releases/download"
+          version="${VERSION_GODOT}"
+
+          existe() {
+            curl -sSI -o /dev/null -w "%{http_code}" \
+              "${base}/$1/Godot_v$1_linux.x86_64.zip" | grep -qE "^(200|302)$"
+          }
+
+          if ! existe "${version}"; then
+            echo "::warning::Godot ${version} introuvable, bascule sur la derniere version stable."
+            version=$(gh api repos/godotengine/godot-builds/releases --paginate \
+              --jq '[.[] | select(.tag_name | endswith("-stable")) | .tag_name] | .[0]')
+          fi
+          echo "Version de Godot utilisee : ${version}"
+          echo "VERSION_RETENUE=${version}" >> "$GITHUB_ENV"
+
+          curl -sSL -o godot.zip "${base}/${version}/Godot_v${version}_linux.x86_64.zip"
+          curl -sSL -o gabarits.tpz "${base}/${version}/Godot_v${version}_export_templates.tpz"
+
+          unzip -q godot.zip
+          mv "Godot_v${version}_linux.x86_64" /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+
+          # Les gabarits doivent porter le nom de version au format « 4.7.2.stable »,
+          # c'est-a-dire le tag dont le tiret est remplace par un point.
+          dossier="${HOME}/.local/share/godot/export_templates/${version/-/.}"
+          mkdir -p "${dossier}"
+          unzip -q gabarits.tpz -d gabarits
+          mv gabarits/templates/* "${dossier}/"
+
+      - name: Indiquer a Godot ou trouver le SDK Android
+        run: |
+          set -euo pipefail
+          # Une premiere ouverture a vide cree le fichier de reglages de
+          # l'editeur, que l'on complete ensuite. Godot ne lit le chemin du SDK
+          # que la : il n'existe pas d'option en ligne de commande pour cela.
+          godot --headless --editor --quit --path "${PROJET}" >/dev/null 2>&1 || true
+          reglages=$(find "${HOME}/.config/godot" -name "editor_settings-*.tres" | head -1)
+          if [ -z "${reglages}" ]; then
+            echo "::error::Fichier de reglages de l'editeur introuvable."
+            exit 1
+          fi
+          echo "Reglages : ${reglages}"
+          sed -i "s|^export/android/android_sdk_path = .*|export/android/android_sdk_path = \"${ANDROID_SDK_ROOT}\"|" "${reglages}"
+          sed -i "s|^export/android/java_sdk_path = .*|export/android/java_sdk_path = \"${JAVA_HOME}\"|" "${reglages}"
+          grep -E "^export/android/(android_sdk_path|java_sdk_path)" "${reglages}"
+
+      - name: Renseigner la cle de signature
+        run: |
+          set -euo pipefail
+          cle="${GITHUB_WORKSPACE}/${PROJET}/debug.keystore"
+          test -s "${cle}"
+          preset="${PROJET}/export_presets.cfg"
+          for role in debug release; do
+            sed -i "s|^keystore/${role}=.*|keystore/${role}=\"${cle}\"|" "${preset}"
+            sed -i "s|^keystore/${role}_user=.*|keystore/${role}_user=\"androiddebugkey\"|" "${preset}"
+            sed -i "s|^keystore/${role}_password=.*|keystore/${role}_password=\"android\"|" "${preset}"
+          done
+          grep -E "^keystore/" "${preset}"
+
+      - name: Importer le projet
+        run: godot --headless --path "${PROJET}" --import
+
+      - name: Tests du noyau de simulation
+        # Determinisme, physique du ballon, serialisation des commandes. Un echec
+        # arrete la compilation : mieux vaut pas d'APK qu'un APK dont les replays
+        # ne rejouent pas la meme partie.
+        run: godot --headless --path "${PROJET}" --script res://tests/test_noyau.gd
+
+      - name: Exporter l'APK
+        run: |
+          set -euo pipefail
+          mkdir -p sortie
+          godot --headless --path "${PROJET}" --export-release "Android" \
+            ../sortie/foot2026.apk
+          ls -lh sortie/
+
+      - name: Verifier que l'APK est exploitable
+        run: |
+          set -euo pipefail
+          fichier=sortie/foot2026.apk
+          test -s "${fichier}"
+          # Un APK est une archive zip : si elle ne s'ouvre pas, l'export a
+          # produit un fichier tronque et le telephone le refusera.
+          unzip -l "${fichier}" | grep -q "AndroidManifest.xml"
+          echo "Taille : $(du -h "${fichier}" | cut -f1)"
+
+      - name: Publier l'APK en artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: foot2026-apk
+          path: sortie/foot2026.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # Pre-release remise a jour a chaque envoi : elle donne une adresse de
+      # telechargement qui ne change jamais, ouvrable directement depuis le
+      # navigateur du telephone.
+      - name: Publier la pre-release de developpement
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete dev-foot --yes --cleanup-tag || true
+          gh release create dev-foot sortie/foot2026.apk \
+            --prerelease \
+            --target "${GITHUB_SHA}" \
+            --title "Foot 2026 (developpement)" \
+            --notes "Compile depuis ${GITHUB_REF_NAME} (${GITHUB_SHA}) avec Godot ${VERSION_RETENUE}.
+
+          APK signe avec une cle de debogage : autoriser l'installation depuis
+          cette source dans les parametres de securite du telephone avant
+          d'ouvrir le fichier."
