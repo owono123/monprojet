@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_tester_alea()
 	_tester_commandes()
 	_tester_ballon()
+	_tester_formations()
 	_tester_determinisme()
 	if _echecs == 0:
 		print("\nTous les tests du noyau passent.")
@@ -119,6 +120,48 @@ func _tester_ballon() -> void:
 	_verifier(mouille.position.x > sec.position.x + 0.5,
 		"le ballon file davantage sur pelouse mouillee",
 		"mouille = %.1f m, sec = %.1f m" % [mouille.position.x, sec.position.x])
+
+func _tester_formations() -> void:
+	print("Formations")
+	var noms := Formation.noms()
+	_verifier(noms.size() >= 5, "les cinq dispositions annoncees existent",
+		"%d trouvee(s)" % noms.size())
+
+	for nom in noms:
+		var disposition := Formation.par_nom(nom)
+		_verifier(disposition.size() == 11, "%s aligne onze joueurs" % nom,
+			"%d joueur(s)" % disposition.size())
+
+		var gardiens := 0
+		var hors_terrain := 0
+		var trop_proches := 0
+		var places: Array[Vector3] = []
+		for entree in disposition:
+			if Postes.est_gardien(entree[0]):
+				gardiens += 1
+			var place := Formation.vers_metres(entree[1], entree[2], 1)
+			if absf(place.x) > Dimensions.DEMI_LONGUEUR or absf(place.z) > Dimensions.DEMI_LARGEUR:
+				hors_terrain += 1
+			# Deux joueurs au meme endroit se bousculeraient sans fin au coup
+			# d'envoi : trois metres est le minimum vital entre deux postes.
+			for deja in places:
+				if deja.distance_to(place) < 3.0:
+					trop_proches += 1
+			places.append(place)
+
+		_verifier(gardiens == 1, "%s n'a qu'un gardien" % nom, "%d gardien(s)" % gardiens)
+		_verifier(hors_terrain == 0, "%s tient dans le terrain" % nom,
+			"%d joueur(s) dehors" % hors_terrain)
+		_verifier(trop_proches == 0, "%s ne superpose aucun joueur" % nom,
+			"%d paire(s) trop proches" % trop_proches)
+
+	# Le sens de jeu doit refleter la formation, pas la recopier : une equipe qui
+	# attaque vers les x negatifs a son gardien du cote oppose.
+	var domicile := Formation.vers_metres(-0.94, 0.0, 1)
+	var exterieur := Formation.vers_metres(-0.94, 0.0, -1)
+	_verifier(domicile.x < 0.0 and exterieur.x > 0.0,
+		"les deux equipes defendent des buts opposes",
+		"%.1f et %.1f" % [domicile.x, exterieur.x])
 
 func _tester_determinisme() -> void:
 	print("Determinisme")
