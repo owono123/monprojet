@@ -8,6 +8,11 @@ extends Control
 ## retombe jamais exactement au meme endroit, et un joystick fixe oblige a
 ## regarder ses mains au lieu du terrain.
 ##
+## Les boutons sont contextuels : quand l'equipe a le ballon on propose TIR,
+## PASSE, CENTRE et LOB ; sinon TACLE, PRESSING et CHANGER. Huit boutons
+## permanents ne tiendraient pas sous un pouce, et surtout la moitie serait
+## toujours inutile.
+##
 ## Cette classe ne fait que traduire des doigts en objet Commandes. Elle
 ## n'appelle jamais la simulation : c'est la simulation qui vient lire.
 
@@ -17,22 +22,41 @@ const RAYON_BOUTON := 52.0
 const ZONE_GAUCHE := 0.48        # part de l'ecran reservee au joystick
 const ZONE_MORTE := 0.14         # part du rayon ignoree au centre
 
+## Contextes d'affichage d'un bouton.
+const AVEC_BALLON := 1
+const SANS_BALLON := 2
+const TOUJOURS := 3
+
+## Mis a jour par la scene principale a chaque image, selon qui tient le ballon.
+var avec_ballon := false:
+	set(valeur):
+		if valeur != avec_ballon:
+			avec_ballon = valeur
+			_oublier_les_boutons_caches()
+			queue_redraw()
+
 var _doigt_joystick := -1
 var _centre_joystick := Vector2.ZERO
 var _position_pouce := Vector2.ZERO
 
-## Boutons d'action. `momentane` distingue une frappe (prise en compte une seule
-## fois par appui) d'un sprint (actif tant que le doigt reste pose).
+## `momentane` distingue une frappe, prise en compte une seule fois par appui,
+## d'un sprint, actif tant que le doigt reste pose.
 var _boutons := [
-	{"nom": "TIR", "bit": Commandes.TIR, "momentane": true,
+	{"nom": "TIR", "bit": Commandes.TIR, "momentane": true, "contexte": AVEC_BALLON,
 		"couleur": Color(0.86, 0.27, 0.25), "decalage": Vector2(0.0, -78.0)},
-	{"nom": "CENTRE", "bit": Commandes.CENTRE, "momentane": true,
+	{"nom": "CENTRE", "bit": Commandes.CENTRE, "momentane": true, "contexte": AVEC_BALLON,
 		"couleur": Color(0.90, 0.66, 0.20), "decalage": Vector2(78.0, 0.0)},
-	{"nom": "PASSE", "bit": Commandes.PASSE, "momentane": true,
+	{"nom": "PASSE", "bit": Commandes.PASSE, "momentane": true, "contexte": AVEC_BALLON,
 		"couleur": Color(0.30, 0.66, 0.35), "decalage": Vector2(0.0, 78.0)},
-	{"nom": "LOB", "bit": Commandes.LOB, "momentane": true,
+	{"nom": "LOB", "bit": Commandes.LOB, "momentane": true, "contexte": AVEC_BALLON,
 		"couleur": Color(0.32, 0.55, 0.85), "decalage": Vector2(-78.0, 0.0)},
-	{"nom": "SPRINT", "bit": Commandes.SPRINT, "momentane": false,
+	{"nom": "TACLE", "bit": Commandes.TACLE, "momentane": true, "contexte": SANS_BALLON,
+		"couleur": Color(0.86, 0.27, 0.25), "decalage": Vector2(0.0, -78.0)},
+	{"nom": "PRESSING", "bit": Commandes.PRESSING, "momentane": false, "contexte": SANS_BALLON,
+		"couleur": Color(0.90, 0.50, 0.20), "decalage": Vector2(78.0, 0.0)},
+	{"nom": "CHANGER", "bit": Commandes.CHANGER, "momentane": true, "contexte": SANS_BALLON,
+		"couleur": Color(0.45, 0.62, 0.88), "decalage": Vector2(0.0, 78.0)},
+	{"nom": "SPRINT", "bit": Commandes.SPRINT, "momentane": false, "contexte": TOUJOURS,
 		"couleur": Color(0.62, 0.62, 0.66), "decalage": Vector2(-196.0, 66.0)},
 ]
 
@@ -53,6 +77,21 @@ func _placer_boutons() -> void:
 	for bouton in _boutons:
 		bouton["position"] = ancre + bouton["decalage"]
 	queue_redraw()
+
+func _visible_maintenant(bouton: Dictionary) -> bool:
+	var contexte: int = bouton["contexte"]
+	if contexte == TOUJOURS:
+		return true
+	return contexte == (AVEC_BALLON if avec_ballon else SANS_BALLON)
+
+## Quand la possession change, un bouton qui disparait ne doit pas rester
+## enfonce : sans cela, un pressing declenche avant de recuperer le ballon
+## resterait actif indefiniment.
+func _oublier_les_boutons_caches() -> void:
+	for bouton in _boutons:
+		if not _visible_maintenant(bouton) and bouton["doigt"] != -1:
+			bouton["doigt"] = -1
+			_maintenus &= ~int(bouton["bit"])
 
 ## Renvoie les commandes de cette image, et consomme les appuis momentanes :
 ## un bouton de frappe ne declenche qu'une seule action par appui, meme si le
@@ -83,11 +122,13 @@ func _input(evenement: InputEvent) -> void:
 
 func _poser_doigt(index: int, endroit: Vector2) -> void:
 	for bouton in _boutons:
-		if bouton["doigt"] == -1 and endroit.distance_to(bouton["position"]) <= RAYON_BOUTON * 1.35:
+		if not _visible_maintenant(bouton) or bouton["doigt"] != -1:
+			continue
+		if endroit.distance_to(bouton["position"]) <= RAYON_BOUTON * 1.35:
 			bouton["doigt"] = index
-			_maintenus |= bouton["bit"]
+			_maintenus |= int(bouton["bit"])
 			if bouton["momentane"]:
-				_declenches |= bouton["bit"]
+				_declenches |= int(bouton["bit"])
 			queue_redraw()
 			return
 
@@ -115,12 +156,10 @@ func _lever_doigt(index: int) -> void:
 	for bouton in _boutons:
 		if bouton["doigt"] == index:
 			bouton["doigt"] = -1
-			# Un bouton momentane garde son bit jusqu'a la prochaine lecture,
-			# sinon un appui bref tombe entre deux images et ne fait rien.
-			if not bouton["momentane"]:
-				_maintenus &= ~bouton["bit"]
-			else:
-				_maintenus &= ~bouton["bit"]
+			# Le bit d'un bouton momentane a deja ete recopie dans _declenches
+			# au moment de l'appui : le relacher ici n'efface donc pas l'action,
+			# meme si le doigt s'est leve entre deux images.
+			_maintenus &= ~int(bouton["bit"])
 			queue_redraw()
 
 func _draw() -> void:
@@ -135,8 +174,10 @@ func _draw() -> void:
 		draw_arc(repere, RAYON_JOYSTICK * 0.7, 0.0, TAU, 40, Color(1, 1, 1, 0.13), 2.0, true)
 
 	var police := get_theme_default_font()
-	var taille_police := 20
+	var taille_police := 19
 	for bouton in _boutons:
+		if not _visible_maintenant(bouton):
+			continue
 		var enfonce: bool = bouton["doigt"] != -1
 		var couleur: Color = bouton["couleur"]
 		var centre: Vector2 = bouton["position"]

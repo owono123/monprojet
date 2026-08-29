@@ -101,7 +101,13 @@ static func par_nom(nom: String) -> Array:
 
 ## Convertit une position reduite en metres sur le terrain.
 ## `sens` vaut +1 si l'equipe attaque vers les x positifs, -1 sinon.
+##
+## Les deux coordonnees changent de signe avec le sens de jeu, pas seulement la
+## profondeur : c'est une rotation d'un demi-tour du dispositif, pas un miroir.
+## Sans cela, le lateral droit d'une equipe se retrouverait du meme cote du
+## terrain que le lateral droit de l'autre.
 static func vers_metres(profondeur: float, largeur: float, sens: int) -> Vector3:
 	var demi_x := Dimensions.DEMI_LONGUEUR - MARGE_BORD
 	var demi_z := Dimensions.DEMI_LARGEUR - MARGE_BORD
-	return Vector3(profondeur * demi_x * float(signi(sens)), 0.0, largeur * demi_z)
+	var signe := float(signi(sens))
+	return Vector3(profondeur * demi_x * signe, 0.0, largeur * demi_z * signe)

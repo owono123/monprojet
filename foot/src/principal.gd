@@ -11,6 +11,7 @@ extends Node3D
 ## quitte a en faire deux dans la meme image ou aucun.
 
 const PAS_MAXI_PAR_IMAGE := 5   # garde-fou : au-dela, on laisse filer le temps
+const JOUEURS_PAR_EQUIPE := 11
 
 var _simulation: Simulation
 var _manette: Manette
@@ -18,21 +19,25 @@ var _terrain: Terrain
 var _ambiance: Ambiance
 var _camera: Camera3D
 var _ballon_visuel: MeshInstance3D
-var _joueur_visuel: Node3D
+var _tableau: Label
+
+## Silhouettes des vingt-deux joueurs, rangees equipe par equipe.
+var _silhouettes: Array[Node3D] = []
+## Anneau pose sous les pieds du joueur pilote.
+var _repere: MeshInstance3D
 
 var _accumulateur := 0.0
 # Etat de l'image precedente, pour interpoler l'affichage entre deux pas de
-# simulation : sans cela le ballon avancerait par saccades des que l'ecran
-# rafraichit plus vite que la simulation.
+# simulation : sans cela tout avancerait par saccades des que l'ecran rafraichit
+# plus vite que la simulation.
 var _ballon_precedent := Vector3.ZERO
-var _joueur_precedent := Vector3.ZERO
+var _positions_precedentes: PackedVector3Array = PackedVector3Array()
 var _orientation_ballon := Basis.IDENTITY
 var _camera_libre := false
 
 func _ready() -> void:
 	_simulation = Simulation.new(2026)
 	_ballon_precedent = _simulation.ballon.position
-	_joueur_precedent = _simulation.etat.joueur_position
 
 	_ambiance = Ambiance.new()
 	add_child(_ambiance)
@@ -43,8 +48,10 @@ func _ready() -> void:
 	_ballon_visuel = _construire_ballon()
 	add_child(_ballon_visuel)
 
-	_joueur_visuel = _construire_joueur()
-	add_child(_joueur_visuel)
+	_repere = _construire_repere()
+	add_child(_repere)
+
+	_construire_les_joueurs()
 
 	_camera = Camera3D.new()
 	_camera.fov = 46.0
@@ -56,15 +63,16 @@ func _ready() -> void:
 	add_child(interface)
 	_manette = Manette.new()
 	interface.add_child(_manette)
+	_tableau = _construire_tableau()
+	interface.add_child(_tableau)
 	interface.add_child(Compteur.new())
 
 func _process(delta: float) -> void:
 	_accumulateur += delta
 	var pas_effectues := 0
 	while _accumulateur >= Simulation.PAS and pas_effectues < PAS_MAXI_PAR_IMAGE:
-		_ballon_precedent = _simulation.ballon.position
-		_joueur_precedent = _simulation.etat.joueur_position
-		_simulation.simuler(_manette.lire())
+		_memoriser_positions()
+		_simulation.simuler(_commandes_de_l_image())
 		_accumulateur -= Simulation.PAS
 		pas_effectues += 1
 	if pas_effectues == PAS_MAXI_PAR_IMAGE:
@@ -72,33 +80,84 @@ func _process(delta: float) -> void:
 		# s'enfoncer en simulant toujours plus a chaque image.
 		_accumulateur = 0.0
 
-	var avancement := clampf(_accumulateur / Simulation.PAS, 0.0, 1.0)
-	_afficher(avancement, delta)
+	_afficher(clampf(_accumulateur / Simulation.PAS, 0.0, 1.0), delta)
+
+## Traduit les commandes de la manette du repere de l'ecran vers celui du
+## terrain.
+##
+## La manette ne connait que des pouces et des pixels ; la simulation ne connait
+## que des metres. Faire la conversion ici, avant de fabriquer l'objet
+## Commandes, est essentiel : ce qui part dans un replay ou sur le reseau est
+## alors une direction de terrain, independante de la camera utilisee au moment
+## du match. Si on enregistrait la direction de l'ecran, rejouer le meme fichier
+## avec une autre camera donnerait un match different.
+func _commandes_de_l_image() -> Commandes:
+	# Les boutons proposes dependent de qui tient le ballon : frapper et passer
+	# quand on l'a, tacler et presser quand on ne l'a pas.
+	_manette.avec_ballon = _simulation.porteur.x == _simulation.equipe_humaine
+	var commandes := _manette.lire()
+	var avant := -_camera.global_transform.basis.z
+	var droite := _camera.global_transform.basis.x
+	avant.y = 0.0
+	droite.y = 0.0
+	if avant.length_squared() < 0.0001 or droite.length_squared() < 0.0001:
+		return commandes
+	avant = avant.normalized()
+	droite = droite.normalized()
+	# L'axe vertical de l'ecran descend : pousser le pouce vers le haut doit
+	# envoyer le joueur vers le fond du terrain, d'ou le signe negatif.
+	var monde := avant * (-commandes.direction.y) + droite * commandes.direction.x
+	commandes.direction = Vector2(monde.x, monde.z)
+	return commandes
+
+func _memoriser_positions() -> void:
+	_ballon_precedent = _simulation.ballon.position
+	var index := 0
+	for equipe in _simulation.equipes:
+		for joueur in equipe.joueurs:
+			_positions_precedentes[index] = joueur.position
+			index += 1
 
 func _afficher(avancement: float, delta: float) -> void:
-	var position_ballon := _ballon_precedent.lerp(_simulation.ballon.position, avancement)
-	_ballon_visuel.position = position_ballon
+	_ballon_visuel.position = _ballon_precedent.lerp(_simulation.ballon.position, avancement)
 	_faire_rouler_ballon(delta)
 
-	var position_joueur := _joueur_precedent.lerp(_simulation.etat.joueur_position, avancement)
-	_joueur_visuel.position = position_joueur
-	var allure := _simulation.etat.joueur_vitesse
-	if allure.length_squared() > 0.25:
-		_joueur_visuel.rotation.y = atan2(allure.x, allure.z)
+	var index := 0
+	for equipe in _simulation.equipes:
+		for joueur in equipe.joueurs:
+			var silhouette := _silhouettes[index]
+			silhouette.position = _positions_precedentes[index].lerp(joueur.position, avancement)
+			# Rotation amortie : un joueur qui pivote d'un bloc a chaque image
+			# donne une impression de pantin.
+			var voulue := joueur.orientation
+			silhouette.rotation.y = lerp_angle(silhouette.rotation.y, voulue, 1.0 - pow(0.001, delta))
+			index += 1
 
+	var pilote := _silhouettes[_simulation.equipe_humaine * JOUEURS_PAR_EQUIPE
+		+ _simulation.joueur_actif]
+	_repere.position = Vector3(pilote.position.x, 0.02, pilote.position.z)
+
+	_mettre_a_jour_le_tableau()
 	_placer_camera(delta)
+
+func _mettre_a_jour_le_tableau() -> void:
+	var etat := _simulation.etat
+	var secondes := int(etat.secondes())
+	_tableau.text = "%s  %d - %d  %s      %02d:%02d" % [
+		_simulation.equipes[0].nom.substr(0, 3).to_upper(),
+		etat.buts_domicile, etat.buts_exterieur,
+		_simulation.equipes[1].nom.substr(0, 3).to_upper(),
+		secondes / 60, secondes % 60]
 
 ## Fait tourner le ballon selon son deplacement. C'est purement visuel : la
 ## simulation, elle, traite le ballon comme un point et n'a pas besoin de savoir
 ## comment il est oriente.
 func _faire_rouler_ballon(delta: float) -> void:
-	var vitesse := _simulation.ballon.vitesse
-	var au_sol := Vector3(vitesse.x, 0.0, vitesse.z)
+	var au_sol := Vector3(_simulation.ballon.vitesse.x, 0.0, _simulation.ballon.vitesse.z)
 	var allure := au_sol.length()
 	if allure > 0.05:
 		var axe := Vector3.UP.cross(au_sol).normalized()
 		_orientation_ballon = Basis(axe, allure / Ballon.RAYON * delta) * _orientation_ballon
-	# Effet : rotation propre autour de la verticale.
 	var effet := _simulation.ballon.rotation.y
 	if absf(effet) > 0.01:
 		_orientation_ballon = Basis(Vector3.UP, effet * delta) * _orientation_ballon
@@ -131,10 +190,11 @@ func _placer_camera(delta: float) -> void:
 
 	# Suivi amorti : la camera rattrape une fraction de son retard par seconde,
 	# ce qui donne un mouvement souple et independant du nombre d'images.
-	var douceur := 1.0 - pow(0.0015, delta)
-	_camera.position = _camera.position.lerp(souhaitee, douceur)
+	_camera.position = _camera.position.lerp(souhaitee, 1.0 - pow(0.0015, delta))
 	if _camera.position.distance_squared_to(regard) > 0.01:
 		_camera.look_at(regard, Vector3.UP)
+
+# --- Construction de la scene ----------------------------------------------
 
 func _construire_ballon() -> MeshInstance3D:
 	var sphere := SphereMesh.new()
@@ -154,41 +214,119 @@ func _construire_ballon() -> MeshInstance3D:
 	visuel.material_override = matiere
 	return visuel
 
-## Silhouette provisoire du joueur : une capsule et une tete, juste de quoi
-## juger l'echelle et la lisibilite a distance de camera. Les corps et les
-## visages fabriques par le code arrivent en phase 3.
-func _construire_joueur() -> Node3D:
+func _construire_les_joueurs() -> void:
+	# Deux jeux de couleurs bien separes : a quinze metres de hauteur, il faut
+	# distinguer les camps d'un coup d'oeil, sans lire les numeros.
+	var tenues := [
+		{"maillot": Color(0.82, 0.14, 0.16), "short": Color(0.12, 0.12, 0.14),
+			"gardien": Color(0.20, 0.68, 0.32)},
+		{"maillot": Color(0.94, 0.94, 0.95), "short": Color(0.16, 0.24, 0.55),
+			"gardien": Color(0.92, 0.72, 0.12)},
+	]
+
+	_positions_precedentes.resize(_simulation.equipes.size() * JOUEURS_PAR_EQUIPE)
+	var index := 0
+	for numero_equipe in _simulation.equipes.size():
+		var equipe := _simulation.equipes[numero_equipe]
+		var tenue: Dictionary = tenues[numero_equipe % tenues.size()]
+		for joueur in equipe.joueurs:
+			var couleur: Color = tenue["gardien"] if Postes.est_gardien(joueur.poste) \
+				else tenue["maillot"]
+			var silhouette := _construire_silhouette(couleur, tenue["short"])
+			silhouette.name = "%s_%s%d" % [equipe.nom,
+				Postes.abreviation(joueur.poste), joueur.numero]
+			silhouette.position = joueur.position
+			add_child(silhouette)
+			_silhouettes.append(silhouette)
+			_positions_precedentes[index] = joueur.position
+			index += 1
+
+## Silhouette provisoire d'un joueur : un tronc, des jambes et une tete, juste
+## de quoi juger l'echelle et la lisibilite a distance de camera. Les corps et
+## les visages fabriques par le code arrivent en phase 3.
+func _construire_silhouette(couleur_maillot: Color, couleur_short: Color) -> Node3D:
 	var groupe := Node3D.new()
-	groupe.name = "JoueurPilote"
 
 	var maillot := StandardMaterial3D.new()
-	maillot.albedo_color = Color(0.85, 0.16, 0.18)
+	maillot.albedo_color = couleur_maillot
 	maillot.roughness = 0.85
+
+	var short := StandardMaterial3D.new()
+	short.albedo_color = couleur_short
+	short.roughness = 0.85
 
 	var peau := StandardMaterial3D.new()
 	peau.albedo_color = Color(0.72, 0.55, 0.42)
 	peau.roughness = 0.7
 
-	var corps := MeshInstance3D.new()
-	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.26
-	capsule.height = 1.42
-	capsule.radial_segments = 12
-	capsule.rings = 4
-	corps.mesh = capsule
-	corps.material_override = maillot
-	corps.position = Vector3(0.0, 0.71, 0.0)
-	groupe.add_child(corps)
+	var tronc := MeshInstance3D.new()
+	var buste := CapsuleMesh.new()
+	buste.radius = 0.22
+	buste.height = 0.86
+	buste.radial_segments = 10
+	buste.rings = 3
+	tronc.mesh = buste
+	tronc.material_override = maillot
+	tronc.position = Vector3(0.0, 1.12, 0.0)
+	groupe.add_child(tronc)
+
+	var jambes := MeshInstance3D.new()
+	var bas := CapsuleMesh.new()
+	bas.radius = 0.19
+	bas.height = 0.86
+	bas.radial_segments = 8
+	bas.rings = 2
+	jambes.mesh = bas
+	jambes.material_override = short
+	jambes.position = Vector3(0.0, 0.44, 0.0)
+	groupe.add_child(jambes)
 
 	var tete := MeshInstance3D.new()
 	var boule := SphereMesh.new()
 	boule.radius = 0.115
 	boule.height = 0.25
-	boule.radial_segments = 12
-	boule.rings = 6
+	boule.radial_segments = 10
+	boule.rings = 5
 	tete.mesh = boule
 	tete.material_override = peau
-	tete.position = Vector3(0.0, 1.56, 0.0)
+	tete.position = Vector3(0.0, 1.66, 0.0)
 	groupe.add_child(tete)
 
 	return groupe
+
+## Anneau pose au sol sous le joueur pilote. Sans ce repere, on perd sans cesse
+## de vue lequel des onze on dirige.
+func _construire_repere() -> MeshInstance3D:
+	var anneau := TorusMesh.new()
+	anneau.inner_radius = 0.42
+	anneau.outer_radius = 0.52
+	anneau.rings = 24
+	anneau.ring_segments = 6
+
+	var matiere := StandardMaterial3D.new()
+	matiere.albedo_color = Color(1.0, 0.95, 0.45)
+	# Sans eclairage, l'anneau garde la meme lisibilite le soir comme en plein
+	# soleil, et ne coute rien a calculer.
+	matiere.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	matiere.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	matiere.albedo_color.a = 0.75
+
+	var visuel := MeshInstance3D.new()
+	visuel.name = "RepereJoueurPilote"
+	visuel.mesh = anneau
+	visuel.material_override = matiere
+	visuel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return visuel
+
+func _construire_tableau() -> Label:
+	var etiquette := Label.new()
+	etiquette.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	etiquette.position = Vector2(-160.0, 14.0)
+	etiquette.custom_minimum_size = Vector2(320.0, 0.0)
+	etiquette.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	etiquette.add_theme_font_size_override("font_size", 26)
+	etiquette.add_theme_color_override("font_color", Color(1, 1, 1, 0.96))
+	etiquette.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	etiquette.add_theme_constant_override("outline_size", 6)
+	etiquette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return etiquette
