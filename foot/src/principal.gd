@@ -21,8 +21,10 @@ var _camera: Camera3D
 var _ballon_visuel: MeshInstance3D
 var _tableau: Label
 
-## Silhouettes des vingt-deux joueurs, rangees equipe par equipe.
-var _silhouettes: Array[Node3D] = []
+## Corps des vingt-deux joueurs, ranges equipe par equipe.
+var _corps: Array[Corps] = []
+## Cycle de foulee de chacun, dans le meme ordre.
+var _allures: Array[Allure] = []
 ## Anneau pose sous les pieds du joueur pilote.
 var _repere: MeshInstance3D
 
@@ -125,15 +127,21 @@ func _afficher(avancement: float, delta: float) -> void:
 	var index := 0
 	for equipe in _simulation.equipes:
 		for joueur in equipe.joueurs:
-			var silhouette := _silhouettes[index]
-			silhouette.position = _positions_precedentes[index].lerp(joueur.position, avancement)
+			var corps := _corps[index]
+			corps.position = _positions_precedentes[index].lerp(joueur.position, avancement)
 			# Rotation amortie : un joueur qui pivote d'un bloc a chaque image
 			# donne une impression de pantin.
-			var voulue := joueur.orientation
-			silhouette.rotation.y = lerp_angle(silhouette.rotation.y, voulue, 1.0 - pow(0.001, delta))
+			corps.rotation.y = lerp_angle(corps.rotation.y, joueur.orientation,
+				1.0 - pow(0.001, delta))
+
+			# La foulee avance au prorata des metres parcourus, pas du temps :
+			# c'est ce qui colle le pied au sol au lieu de le faire patiner.
+			var allure := Vector3(joueur.vitesse.x, 0.0, joueur.vitesse.z).length()
+			_allures[index].avancer(allure * delta, allure, delta)
+			_allures[index].appliquer(corps, allure)
 			index += 1
 
-	var pilote := _silhouettes[_simulation.equipe_humaine * JOUEURS_PAR_EQUIPE
+	var pilote := _corps[_simulation.equipe_humaine * JOUEURS_PAR_EQUIPE
 		+ _simulation.joueur_actif]
 	_repere.position = Vector3(pilote.position.x, 0.02, pilote.position.z)
 
@@ -163,6 +171,15 @@ func _faire_rouler_ballon(delta: float) -> void:
 		_orientation_ballon = Basis(Vector3.UP, effet * delta) * _orientation_ballon
 	_orientation_ballon = _orientation_ballon.orthonormalized()
 	_ballon_visuel.basis = _orientation_ballon
+
+## Ou se trouve un joueur donne. Sert aux captures de controle, qui doivent
+## viser un corps reel : les joueurs se deplacent des le coup d'envoi, viser un
+## point fixe du terrain donne une image ou il n'y a personne.
+func position_du_joueur(numero_equipe: int, rang: int) -> Vector3:
+	var index := numero_equipe * JOUEURS_PAR_EQUIPE + rang
+	if index < 0 or index >= _corps.size():
+		return Vector3.ZERO
+	return _corps[index].position
 
 ## Fige la camera a un endroit precis et coupe le suivi automatique. Utilise par
 ## les captures de controle, et base de la camera libre des replays.
@@ -214,85 +231,83 @@ func _construire_ballon() -> MeshInstance3D:
 	visuel.material_override = matiere
 	return visuel
 
+## Teints de peau proposes. La liste est volontairement large : un effectif de
+## football n'a aucune raison d'etre uniforme, et l'editeur de la phase 4
+## laissera de toute facon regler chaque joueur.
+const TEINTS := [
+	Color(0.94, 0.80, 0.69), Color(0.87, 0.71, 0.58), Color(0.78, 0.60, 0.46),
+	Color(0.65, 0.47, 0.34), Color(0.50, 0.35, 0.25), Color(0.36, 0.24, 0.17),
+	Color(0.27, 0.18, 0.13),
+]
+
+## Cheveux et yeux. Les indices se recoupent volontairement avec ceux des
+## teints : un teint clair tire plutot vers les cheveux clairs, sans que la
+## correspondance soit stricte — un effectif reel ne l'est pas non plus.
+const CHEVEUX := [
+	Color(0.09, 0.07, 0.06), Color(0.16, 0.11, 0.08), Color(0.26, 0.16, 0.09),
+	Color(0.40, 0.27, 0.14), Color(0.58, 0.44, 0.22), Color(0.72, 0.61, 0.38),
+	Color(0.48, 0.48, 0.50),
+]
+const IRIS := [
+	Color(0.20, 0.13, 0.08), Color(0.29, 0.19, 0.11), Color(0.34, 0.28, 0.16),
+	Color(0.22, 0.35, 0.30), Color(0.24, 0.36, 0.48),
+]
+
 func _construire_les_joueurs() -> void:
 	# Deux jeux de couleurs bien separes : a quinze metres de hauteur, il faut
 	# distinguer les camps d'un coup d'oeil, sans lire les numeros.
 	var tenues := [
-		{"maillot": Color(0.82, 0.14, 0.16), "short": Color(0.12, 0.12, 0.14),
-			"gardien": Color(0.20, 0.68, 0.32)},
-		{"maillot": Color(0.94, 0.94, 0.95), "short": Color(0.16, 0.24, 0.55),
-			"gardien": Color(0.92, 0.72, 0.12)},
+		{"maillot": Color(0.80, 0.11, 0.14), "maillot_secondaire": Color(0.10, 0.10, 0.12),
+			"short": Color(0.10, 0.10, 0.12), "chaussettes": Color(0.80, 0.11, 0.14),
+			"chaussures": Color(0.06, 0.06, 0.07), "motif": 1},
+		{"maillot": Color(0.93, 0.93, 0.95), "maillot_secondaire": Color(0.13, 0.22, 0.52),
+			"short": Color(0.13, 0.22, 0.52), "chaussettes": Color(0.93, 0.93, 0.95),
+			"chaussures": Color(0.90, 0.88, 0.20), "motif": 0},
 	]
+	var tenues_gardien := [
+		{"maillot": Color(0.18, 0.62, 0.30), "maillot_secondaire": Color(0.08, 0.32, 0.16),
+			"short": Color(0.08, 0.32, 0.16), "chaussettes": Color(0.18, 0.62, 0.30),
+			"chaussures": Color(0.06, 0.06, 0.07), "motif": 0},
+		{"maillot": Color(0.90, 0.55, 0.10), "maillot_secondaire": Color(0.35, 0.18, 0.03),
+			"short": Color(0.35, 0.18, 0.03), "chaussettes": Color(0.90, 0.55, 0.10),
+			"chaussures": Color(0.06, 0.06, 0.07), "motif": 0},
+	]
+
+	# Un generateur a graine dedie : la morphologie doit etre stable d'un
+	# lancement a l'autre, mais elle ne concerne que l'affichage et ne doit
+	# surtout pas puiser dans l'alea de la simulation, sous peine de fausser le
+	# determinisme des replays.
+	var apparences := Alea.new(20260827)
 
 	_positions_precedentes.resize(_simulation.equipes.size() * JOUEURS_PAR_EQUIPE)
 	var index := 0
 	for numero_equipe in _simulation.equipes.size():
 		var equipe := _simulation.equipes[numero_equipe]
-		var tenue: Dictionary = tenues[numero_equipe % tenues.size()]
 		for joueur in equipe.joueurs:
-			var couleur: Color = tenue["gardien"] if Postes.est_gardien(joueur.poste) \
-				else tenue["maillot"]
-			var silhouette := _construire_silhouette(couleur, tenue["short"])
-			silhouette.name = "%s_%s%d" % [equipe.nom,
+			var tenue: Dictionary = (tenues_gardien if Postes.est_gardien(joueur.poste)
+				else tenues)[numero_equipe % 2].duplicate()
+			# Le teint tire au sort oriente la couleur de cheveux vers la meme
+			# extremite de la palette, sans l'y enfermer.
+			var teint := apparences.entier(TEINTS.size())
+			tenue["peau"] = TEINTS[teint]
+			tenue["cheveux"] = CHEVEUX[clampi(teint + apparences.entier_entre(-1, 1),
+				0, CHEVEUX.size() - 1)]
+			tenue["iris"] = IRIS[apparences.entier(IRIS.size())]
+
+			var corps := Corps.construire(
+				apparences.reel_entre(1.68, 1.94),   # taille
+				apparences.reel_entre(0.25, 0.75),   # corpulence
+				tenue,
+				Visage.traits_au_hasard(apparences))
+			corps.name = "%s_%s%d" % [equipe.nom,
 				Postes.abreviation(joueur.poste), joueur.numero]
-			silhouette.position = joueur.position
-			add_child(silhouette)
-			_silhouettes.append(silhouette)
+			corps.position = joueur.position
+			add_child(corps)
+
+			_corps.append(corps)
+			_allures.append(Allure.new())
 			_positions_precedentes[index] = joueur.position
 			index += 1
-
-## Silhouette provisoire d'un joueur : un tronc, des jambes et une tete, juste
-## de quoi juger l'echelle et la lisibilite a distance de camera. Les corps et
-## les visages fabriques par le code arrivent en phase 3.
-func _construire_silhouette(couleur_maillot: Color, couleur_short: Color) -> Node3D:
-	var groupe := Node3D.new()
-
-	var maillot := StandardMaterial3D.new()
-	maillot.albedo_color = couleur_maillot
-	maillot.roughness = 0.85
-
-	var short := StandardMaterial3D.new()
-	short.albedo_color = couleur_short
-	short.roughness = 0.85
-
-	var peau := StandardMaterial3D.new()
-	peau.albedo_color = Color(0.72, 0.55, 0.42)
-	peau.roughness = 0.7
-
-	var tronc := MeshInstance3D.new()
-	var buste := CapsuleMesh.new()
-	buste.radius = 0.22
-	buste.height = 0.86
-	buste.radial_segments = 10
-	buste.rings = 3
-	tronc.mesh = buste
-	tronc.material_override = maillot
-	tronc.position = Vector3(0.0, 1.12, 0.0)
-	groupe.add_child(tronc)
-
-	var jambes := MeshInstance3D.new()
-	var bas := CapsuleMesh.new()
-	bas.radius = 0.19
-	bas.height = 0.86
-	bas.radial_segments = 8
-	bas.rings = 2
-	jambes.mesh = bas
-	jambes.material_override = short
-	jambes.position = Vector3(0.0, 0.44, 0.0)
-	groupe.add_child(jambes)
-
-	var tete := MeshInstance3D.new()
-	var boule := SphereMesh.new()
-	boule.radius = 0.115
-	boule.height = 0.25
-	boule.radial_segments = 10
-	boule.rings = 5
-	tete.mesh = boule
-	tete.material_override = peau
-	tete.position = Vector3(0.0, 1.66, 0.0)
-	groupe.add_child(tete)
-
-	return groupe
 
 ## Anneau pose au sol sous le joueur pilote. Sans ce repere, on perd sans cesse
 ## de vue lequel des onze on dirige.
@@ -304,12 +319,13 @@ func _construire_repere() -> MeshInstance3D:
 	anneau.ring_segments = 6
 
 	var matiere := StandardMaterial3D.new()
-	matiere.albedo_color = Color(1.0, 0.95, 0.45)
+	# Cyan plutot que jaune : une des deux equipes porte des chaussures jaunes,
+	# et l'anneau se confondait avec elles au premier coup d'oeil.
+	matiere.albedo_color = Color(0.30, 0.95, 1.0, 0.80)
 	# Sans eclairage, l'anneau garde la meme lisibilite le soir comme en plein
 	# soleil, et ne coute rien a calculer.
 	matiere.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	matiere.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	matiere.albedo_color.a = 0.75
 
 	var visuel := MeshInstance3D.new()
 	visuel.name = "RepereJoueurPilote"
