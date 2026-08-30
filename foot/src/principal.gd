@@ -172,6 +172,10 @@ func _mettre_a_jour_le_tableau() -> void:
 		etat.buts_domicile, etat.buts_exterieur,
 		_simulation.equipes[1].nom.substr(0, 3).to_upper(),
 		secondes / 60, secondes % 60]
+	# Ce qui vient d'etre siffle, sous le score. Sans ce mot, une touche ou un
+	# corner ressemblent a un ballon qui s'arrete tout seul.
+	var arret := _simulation.libelle_de_l_arret()
+	_tableau.text += "" if arret.is_empty() else "\n%s" % arret.to_upper()
 
 ## Fait tourner le ballon selon son deplacement. C'est purement visuel : la
 ## simulation, elle, traite le ballon comme un point et n'a pas besoin de savoir

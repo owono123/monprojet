@@ -17,6 +17,9 @@ func _initialize() -> void:
 	_tester_gardien()
 	_tester_buts()
 	_tester_changement_de_joueur()
+	_tester_sorties()
+	_tester_hors_jeu()
+	_tester_reprise_de_jeu()
 	_tester_determinisme()
 	_mesurer_le_cout()
 	if _echecs == 0:
@@ -364,6 +367,127 @@ func _tester_changement_de_joueur() -> void:
 			repris = true
 			break
 	_verifier(repris, "le changement automatique reprend apres la priorite")
+
+# --- Sorties de ballon -----------------------------------------------------
+
+func _tester_sorties() -> void:
+	print("Sorties de ballon")
+	# L'equipe 0 attaque vers les x positifs, l'equipe 1 vers les x negatifs.
+	var sens := [1, -1]
+
+	_verifier(not Regles.est_sorti(Vector3(52.4, 0.1, 33.9)),
+		"un ballon dans les limites est en jeu")
+	_verifier(not Regles.est_sorti(Vector3(Dimensions.DEMI_LONGUEUR, 0.1, 0.0)),
+		"un ballon pile sur la ligne est encore en jeu")
+	_verifier(Regles.est_sorti(Vector3(52.6, 0.1, 0.0)),
+		"un ballon au-dela de la ligne est sorti")
+
+	# Touche : elle revient a l'adversaire du dernier joueur a l'avoir touche.
+	var touche := Regles.decider(Vector3(12.0, 0.2, 34.6), 0, sens)
+	_verifier(touche["decision"] == Regles.TOUCHE, "sortie sur le cote : touche")
+	_verifier(int(touche["equipe"]) == 1, "la touche revient a l'adversaire")
+	var point_touche: Vector3 = touche["point"]
+	_verifier(is_equal_approx(point_touche.z, Dimensions.DEMI_LARGEUR)
+		and is_equal_approx(point_touche.x, 12.0),
+		"la touche se joue la ou le ballon est sorti",
+		"point = %.1f, %.1f" % [point_touche.x, point_touche.z])
+
+	# Ligne de but franchie par la defense : corner. L'equipe 1 defend le but
+	# situe en x positif, puisqu'elle attaque vers les x negatifs.
+	var corner := Regles.decider(Vector3(53.0, 0.2, 20.0), 1, sens)
+	_verifier(corner["decision"] == Regles.CORNER,
+		"ballon sorti par la defense : corner")
+	_verifier(int(corner["equipe"]) == 0, "le corner revient a l'attaque")
+	var point_corner: Vector3 = corner["point"]
+	_verifier(is_equal_approx(absf(point_corner.x), Dimensions.DEMI_LONGUEUR)
+		and is_equal_approx(absf(point_corner.z), Dimensions.DEMI_LARGEUR),
+		"le corner se joue dans l'angle")
+
+	# Meme ligne, mais poussee dehors par l'attaque : six metres.
+	var six := Regles.decider(Vector3(53.0, 0.2, 20.0), 0, sens)
+	_verifier(six["decision"] == Regles.SIX_METRES,
+		"ballon sorti par l'attaque : six metres")
+	_verifier(int(six["equipe"]) == 1, "les six metres reviennent a la defense")
+
+	# Entre les poteaux et sous la barre : but, quelle que soit la sortie.
+	var but := Regles.decider(Vector3(53.0, 1.0, 0.0), 0, sens)
+	_verifier(but["decision"] == Regles.BUT, "entre les poteaux : but")
+	_verifier(int(but["equipe"]) == 0, "le but revient a l'equipe qui attaque de ce cote")
+	_verifier(Regles.decider(Vector3(53.0, 3.0, 0.0), 0, sens)["decision"] != Regles.BUT,
+		"au-dessus de la barre : pas de but")
+
+# --- Hors-jeu ---------------------------------------------------------------
+
+func _tester_hors_jeu() -> void:
+	print("Hors-jeu")
+	# L'equipe etudiee attaque vers les x positifs. Les adversaires sont donnes
+	# par leur seule abscisse : gardien a 50, defenseurs a 30 et 28.
+	var defense := [50.0, 30.0, 28.0, 10.0]
+
+	_verifier(Regles.est_hors_jeu(35.0, 20.0, defense, 1),
+		"devant l'avant-dernier defenseur : hors-jeu")
+	_verifier(not Regles.est_hors_jeu(25.0, 20.0, defense, 1),
+		"derriere l'avant-dernier defenseur : en jeu")
+	_verifier(not Regles.est_hors_jeu(30.0, 20.0, defense, 1),
+		"a hauteur du defenseur : en jeu")
+	_verifier(not Regles.est_hors_jeu(-5.0, -20.0, defense, 1),
+		"dans son propre camp : jamais hors-jeu")
+	_verifier(not Regles.est_hors_jeu(35.0, 40.0, defense, 1),
+		"en retrait du ballon : jamais hors-jeu")
+
+	# Le meme cas dans l'autre sens de jeu doit donner la meme reponse.
+	var defense_miroir := [-50.0, -30.0, -28.0, -10.0]
+	_verifier(Regles.est_hors_jeu(-35.0, -20.0, defense_miroir, -1),
+		"la regle vaut dans les deux sens de jeu")
+
+	# Un gardien sorti tres haut change l'avant-dernier defenseur : c'est
+	# exactement le cas ou une regle qui supposerait le gardien dernier se
+	# tromperait.
+	var gardien_sorti := [12.0, 30.0, 28.0]
+	_verifier(Regles.est_hors_jeu(31.0, 20.0, gardien_sorti, 1),
+		"gardien sorti : l'avant-dernier defenseur est recalcule")
+
+# --- Reprise de jeu ---------------------------------------------------------
+
+func _tester_reprise_de_jeu() -> void:
+	print("Reprise de jeu")
+	var simulation := Simulation.new(2026)
+	var rien := Commandes.new()
+
+	# On envoie le ballon franchement en touche.
+	simulation.ballon.placer(Vector3(10.0, 0.3, 30.0))
+	simulation.ballon.vitesse = Vector3(0.0, 0.0, 30.0)
+	for _i in 20:
+		simulation.simuler(rien)
+
+	_verifier(simulation.au_repos(), "une sortie arrete le jeu")
+	_verifier(absf(simulation.ballon.position.z) <= Dimensions.DEMI_LARGEUR + 0.01,
+		"le ballon est ramene sur la ligne de touche",
+		"z = %.2f" % simulation.ballon.position.z)
+
+	# Le jeu doit repartir tout seul, sans intervention.
+	var reparti := false
+	for _i in 150:
+		simulation.simuler(rien)
+		if not simulation.au_repos():
+			reparti = true
+			break
+	_verifier(reparti, "le jeu repart apres la remise en jeu")
+
+	# Et le ballon ne doit plus jamais s'echapper : sur un match complet, chaque
+	# sortie doit etre rattrapee par une remise en jeu.
+	var scenario := Alea.new(31)
+	var loin := false
+	for _i in 2400:
+		simulation.simuler(Commandes.new(
+			Vector2(scenario.reel_entre(-1.0, 1.0), scenario.reel_entre(-1.0, 1.0)),
+			Commandes.TIR if scenario.chance(0.02) else Commandes.AUCUN))
+		if absf(simulation.ballon.position.x) > Dimensions.DEMI_LONGUEUR + 12.0 \
+				or absf(simulation.ballon.position.z) > Dimensions.DEMI_LARGEUR + 12.0:
+			loin = true
+			break
+	_verifier(not loin, "le ballon ne s'echappe jamais du terrain",
+		"ballon en %.1f, %.1f" % [simulation.ballon.position.x, simulation.ballon.position.z])
 
 # --- Determinisme ----------------------------------------------------------
 

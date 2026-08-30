@@ -39,6 +39,9 @@ var equipes: Array[Equipe] = []
 ## Adherence du gazon, fixee par la meteo. 1.0 par temps sec.
 var glisse := 1.0
 
+## Le hors-jeu peut etre desactive, comme le demande le menu des reglages.
+var hors_jeu_actif := true
+
 var equipe_humaine := 0
 var joueur_actif := 10
 
@@ -62,6 +65,18 @@ var _changer_enfonce := false
 var _tacle_enfonce := false
 var _dernier_toucheur := -1
 var _repos_apres_but := 0
+var _equipe_qui_a_encaisse := 1
+
+## Remise en jeu en cours : touche, corner ou six metres. Vide quand le jeu
+## court. Contient la decision rendue par Regles, le tireur designe et le temps
+## restant avant l'execution.
+var _arret := {}
+var _compte_a_rebours := 0
+
+## Passe adressee a un joueur en position de hors-jeu. La faute n'est signalee
+## qu'au moment ou il touche le ballon, comme le veut la regle : tant qu'il n'y
+## touche pas, il n'y a rien a sanctionner.
+var _hors_jeu_en_attente := Vector2i(-1, -1)
 
 func _init(graine: int = 1, formation_domicile: String = "4-4-2",
 		formation_exterieur: String = "4-3-3") -> void:
@@ -100,11 +115,16 @@ func simuler(commandes: Commandes) -> void:
 	porteur = _trouver_porteur()
 	_deplacer_equipe_humaine(commandes, porteur)
 	_deplacer_equipe_ordinateur()
-	_tenter_tacle(commandes, porteur)
-	_jouer_le_ballon(commandes, porteur)
+
+	if _arret.is_empty():
+		_tenter_tacle(commandes, porteur)
+		_jouer_le_ballon(commandes, porteur)
+	else:
+		_conduire_la_remise_en_jeu()
+
+	_contenir_les_joueurs()
 	ballon.avancer(PAS, glisse)
-	_verifier_but()
-	_contenir_ballon()
+	_arbitrer()
 	etat.image += 1
 
 # --- Choix du joueur pilote ------------------------------------------------
@@ -212,6 +232,16 @@ func _jouer_le_ballon(commandes: Commandes, porteur: Vector2i) -> void:
 		return
 	var equipe := equipes[porteur.x]
 	var joueur := equipe.joueurs[porteur.y]
+
+	# Le hors-jeu ne se siffle qu'au moment ou le joueur signale touche le
+	# ballon : tant qu'il n'y touche pas, il n'y a rien a sanctionner. Si
+	# quelqu'un d'autre intervient avant lui, la position est effacee.
+	if _hors_jeu_en_attente.x >= 0:
+		if porteur == _hors_jeu_en_attente:
+			_siffler_le_hors_jeu(joueur)
+			return
+		_hors_jeu_en_attente = Vector2i(-1, -1)
+
 	_dernier_toucheur = porteur.x
 
 	var geste := ""
@@ -316,7 +346,12 @@ func _passer(equipe: Equipe, joueur: Joueur, regard: Vector3) -> void:
 ## Passe calee sur la distance : trop faible, elle se fait intercepter ; trop
 ## forte, elle file en touche. On vise legerement devant le coequipier pour
 ## qu'il la prenne en courant.
+##
+## C'est ici que la position de hors-jeu est jugee : la regle s'apprecie au
+## moment ou le ballon est joue, pas au moment ou il est recu.
 func _passer_a(equipe: Equipe, passeur: Joueur, receveur: Joueur) -> void:
+	if hors_jeu_actif and _est_hors_jeu(equipe, receveur):
+		_hors_jeu_en_attente = Vector2i(receveur.equipe, receveur.rang)
 	var devant := Vector3(receveur.vitesse.x, 0.0, receveur.vitesse.z) * 0.35
 	var cible := receveur.position + devant
 	var direction := cible - passeur.position
@@ -381,6 +416,39 @@ func _adversaire_le_plus_gene(adversaires: Equipe, depart: Vector3, arrivee: Vec
 		pire = maxf(pire, clampf(1.0 - ecart / 3.0, 0.0, 1.0))
 	return pire
 
+func _est_hors_jeu(equipe: Equipe, receveur: Joueur) -> bool:
+	var x_adverses: Array = []
+	for adversaire in equipes[1 - receveur.equipe].joueurs:
+		x_adverses.append(adversaire.position.x)
+	return Regles.est_hors_jeu(receveur.position.x, ballon.position.x,
+		x_adverses, equipe.sens)
+
+## Coup franc indirect pour l'adversaire, la ou la faute a ete constatee.
+func _siffler_le_hors_jeu(fautif: Joueur) -> void:
+	var point := Vector3(
+		clampf(fautif.position.x, -Dimensions.DEMI_LONGUEUR + 1.0,
+			Dimensions.DEMI_LONGUEUR - 1.0),
+		0.0,
+		clampf(fautif.position.z, -Dimensions.DEMI_LARGEUR + 1.0,
+			Dimensions.DEMI_LARGEUR - 1.0))
+	_hors_jeu_en_attente = Vector2i(-1, -1)
+	_preparer_la_remise_en_jeu({
+		"decision": Regles.COUP_FRANC,
+		"point": point,
+		"equipe": 1 - fautif.equipe,
+	})
+
+## Garde-fou : personne ne s'echappe de la pelouse. Un joueur peut sortir des
+## lignes — pour une touche, ou en poursuivant un ballon — mais pas quitter le
+## terrain tout court.
+func _contenir_les_joueurs() -> void:
+	var bord_x := Dimensions.DEMI_LONGUEUR + Dimensions.MARGE_PELOUSE
+	var bord_z := Dimensions.DEMI_LARGEUR + Dimensions.MARGE_PELOUSE
+	for equipe in equipes:
+		for joueur in equipe.joueurs:
+			joueur.position.x = clampf(joueur.position.x, -bord_x, bord_x)
+			joueur.position.z = clampf(joueur.position.z, -bord_z, bord_z)
+
 # --- Tacle -----------------------------------------------------------------
 
 ## Le joueur pilote tente de reprendre le ballon. La reussite depend de sa
@@ -407,39 +475,108 @@ func _tenter_tacle(commandes: Commandes, porteur: Vector2i) -> void:
 		ballon.frapper(vers_avant, alea.reel_entre(5.0, 9.0), 6.0, 0.0)
 		_dernier_toucheur = equipe_humaine
 
-# --- Buts et limites -------------------------------------------------------
+# --- Arbitrage -------------------------------------------------------------
 
-func _verifier_but() -> void:
-	if absf(ballon.position.x) < Dimensions.DEMI_LONGUEUR:
+## Examine la position du ballon apres son deplacement et applique les Lois du
+## jeu. C'est le seul endroit qui decide d'un but ou d'une sortie.
+func _arbitrer() -> void:
+	if not _arret.is_empty():
 		return
-	if absf(ballon.position.z) > Dimensions.BUT_DEMI_LARGEUR:
+	if not Regles.est_sorti(ballon.position):
 		return
-	if ballon.position.y > Dimensions.BUT_HAUTEUR:
-		return
-	# Le ballon a franchi la ligne entre les poteaux et sous la barre.
-	var but_a_droite := ballon.position.x > 0.0
-	# L'equipe qui attaque vers les x positifs marque dans le but de droite.
-	var marque_domicile := (equipes[0].sens > 0) == but_a_droite
-	etat.marquer(marque_domicile)
+
+	var decision := Regles.decider(ballon.position, _dernier_toucheur,
+		[equipes[0].sens, equipes[1].sens])
+	match decision["decision"]:
+		Regles.BUT:
+			_accorder_le_but(int(decision["equipe"]))
+		Regles.TOUCHE, Regles.CORNER, Regles.SIX_METRES:
+			_preparer_la_remise_en_jeu(decision)
+
+func _accorder_le_but(marqueur: int) -> void:
+	etat.marquer(marqueur == 0)
+	_equipe_qui_a_encaisse = 1 - marqueur
 	etat.phase = EtatMatch.ARRETEE
+	_hors_jeu_en_attente = Vector2i(-1, -1)
 	_repos_apres_but = 90
 
 func _equipe_qui_engage_apres_but() -> int:
-	# L'equipe encaissee engage.
-	var domicile_a_marque := etat.buts_domicile > etat.buts_exterieur
-	return 1 if domicile_a_marque else 0
+	# L'equipe qui vient d'encaisser engage.
+	return _equipe_qui_a_encaisse
 
-## Empeche le ballon de partir a l'infini tant que les regles de sortie ne sont
-## pas ecrites (phase 2). Il rebondit sur une cloture invisible.
-func _contenir_ballon() -> void:
-	var bord_x := Dimensions.DEMI_LONGUEUR + Dimensions.MARGE_PELOUSE
-	var bord_z := Dimensions.DEMI_LARGEUR + Dimensions.MARGE_PELOUSE
-	if absf(ballon.position.x) > bord_x:
-		ballon.position.x = clampf(ballon.position.x, -bord_x, bord_x)
-		ballon.vitesse.x = -ballon.vitesse.x * 0.4
-	if absf(ballon.position.z) > bord_z:
-		ballon.position.z = clampf(ballon.position.z, -bord_z, bord_z)
-		ballon.vitesse.z = -ballon.vitesse.z * 0.4
+## Pose le ballon sur son point de remise en jeu et designe un tireur.
+##
+## Le jeu s'arrete une seconde et demie : le temps que le tireur rejoigne le
+## ballon et que le joueur comprenne ce qui vient d'etre siffle. Sans cette
+## pause, une touche ressemblerait a un rebond et le match deviendrait illisible.
+func _preparer_la_remise_en_jeu(decision: Dictionary) -> void:
+	var point: Vector3 = decision["point"]
+	ballon.placer(point)
+	etat.phase = EtatMatch.ARRETEE
+	_hors_jeu_en_attente = Vector2i(-1, -1)
+
+	var equipe_beneficiaire := int(decision["equipe"])
+	var tireur := equipes[equipe_beneficiaire].le_plus_proche(point)
+	_arret = {
+		"decision": decision["decision"],
+		"point": point,
+		"equipe": equipe_beneficiaire,
+		"tireur": tireur,
+	}
+	_compte_a_rebours = 90
+	_dernier_toucheur = equipe_beneficiaire
+
+## Pendant l'arret : le ballon reste pose, le tireur vient le chercher, puis le
+## joue quand le decompte tombe a zero.
+func _conduire_la_remise_en_jeu() -> void:
+	var point: Vector3 = _arret["point"]
+	ballon.placer(point)
+
+	var equipe_beneficiaire := int(_arret["equipe"])
+	var rang := int(_arret["tireur"])
+	if rang >= 0:
+		var tireur := equipes[equipe_beneficiaire].joueurs[rang]
+		# Le tireur se place a cote du ballon, pas dessus.
+		var approche := point - Vector3(0.0, 0.0, signf(point.z) * 0.8)
+		tireur.rejoindre(PAS, approche, 1.0)
+
+	_compte_a_rebours -= 1
+	if _compte_a_rebours > 0:
+		return
+
+	if rang >= 0:
+		var tireur := equipes[equipe_beneficiaire].joueurs[rang]
+		var receveur := _meilleur_receveur(equipes[equipe_beneficiaire], tireur)
+		if receveur >= 0:
+			_passer_a(equipes[equipe_beneficiaire], tireur,
+				equipes[equipe_beneficiaire].joueurs[receveur])
+		else:
+			# Personne de disponible : on degage vers l'avant.
+			ballon.frapper(Vector3(float(equipes[equipe_beneficiaire].sens), 0.0, 0.0),
+				16.0, 22.0, 0.0)
+		gestes.append({"equipe": equipe_beneficiaire, "rang": rang, "geste": "passe"})
+
+	_arret = {}
+	etat.phase = EtatMatch.EN_JEU
+
+## Vrai si une remise en jeu est en cours. L'interface s'en sert pour afficher
+## ce qui a ete siffle.
+func au_repos() -> bool:
+	return not _arret.is_empty() or _repos_apres_but > 0
+
+## Ce qui vient d'etre siffle, en clair. Chaine vide quand le jeu court.
+func libelle_de_l_arret() -> String:
+	if _repos_apres_but > 0:
+		return "BUT"
+	if _arret.is_empty():
+		return ""
+	var equipe := equipes[int(_arret["equipe"])].nom
+	match int(_arret["decision"]):
+		Regles.TOUCHE: return "TOUCHE  %s" % equipe
+		Regles.CORNER: return "CORNER  %s" % equipe
+		Regles.SIX_METRES: return "SIX METRES  %s" % equipe
+		Regles.COUP_FRANC: return "HORS-JEU  coup franc  %s" % equipe
+	return ""
 
 # --- Determinisme ----------------------------------------------------------
 
