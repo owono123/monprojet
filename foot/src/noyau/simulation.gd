@@ -47,6 +47,16 @@ var joueur_actif := 10
 ## affiches sont ceux du porteur ou ceux du defenseur.
 var porteur := Vector2i(-1, -1)
 
+## Gestes survenus pendant l'image qui vient d'etre simulee : frappes, tacles.
+##
+## C'est de l'information a sens unique, du noyau vers l'affichage. La
+## simulation ne s'en sert jamais elle-meme : elle sait deja tout ce qu'il lui
+## faut. Cette liste existe seulement pour que le rendu puisse declencher la
+## bonne animation au bon moment, sans avoir a deviner apres coup qu'un ballon
+## est parti. Elle est videe au debut de chaque pas ; l'affichage la lit juste
+## apres son appel a simuler().
+var gestes: Array[Dictionary] = []
+
 var _priorite_manuelle := 0
 var _changer_enfonce := false
 var _tacle_enfonce := false
@@ -77,6 +87,7 @@ func placer_coup_d_envoi(equipe_qui_engage: int) -> void:
 
 ## Avance d'une image. C'est la seule facon de faire progresser le match.
 func simuler(commandes: Commandes) -> void:
+	gestes.clear()
 	if _repos_apres_but > 0:
 		# Petite pause apres un but, le temps que l'image montre la remise en jeu.
 		_repos_apres_but -= 1
@@ -203,41 +214,51 @@ func _jouer_le_ballon(commandes: Commandes, porteur: Vector2i) -> void:
 	var joueur := equipe.joueurs[porteur.y]
 	_dernier_toucheur = porteur.x
 
+	var geste := ""
 	if porteur.x == equipe_humaine and porteur.y == joueur_actif:
-		_action_du_joueur(commandes, equipe, joueur)
+		geste = _action_du_joueur(commandes, equipe, joueur)
 	else:
-		_action_de_l_ordinateur(equipe, joueur)
+		geste = _action_de_l_ordinateur(equipe, joueur)
+	if geste != "":
+		gestes.append({"equipe": porteur.x, "rang": porteur.y, "geste": geste})
 
-func _action_du_joueur(commandes: Commandes, equipe: Equipe, joueur: Joueur) -> void:
+## Renvoie le nom du geste a jouer a l'ecran, ou une chaine vide si le joueur
+## s'est contente de pousser le ballon devant lui.
+func _action_du_joueur(commandes: Commandes, equipe: Equipe, joueur: Joueur) -> String:
 	var regard := _regard(joueur, equipe)
 	var effet := commandes.direction_normalisee().y * 2.0
 
 	if commandes.appuye(Commandes.TIR):
 		_frapper_au_but(equipe, joueur)
-	elif commandes.appuye(Commandes.LOB):
+		return "frappe"
+	if commandes.appuye(Commandes.LOB):
 		ballon.frapper(regard, 15.0, 44.0, effet)
-	elif commandes.appuye(Commandes.CENTRE):
+		return "frappe"
+	if commandes.appuye(Commandes.CENTRE):
 		_centrer(equipe, joueur)
-	elif commandes.appuye(Commandes.PASSE):
+		return "frappe"
+	if commandes.appuye(Commandes.PASSE):
 		_passer(equipe, joueur, regard)
-	else:
-		_conduire(joueur, regard)
+		return "passe"
+	_conduire(joueur, regard)
+	return ""
 
-func _action_de_l_ordinateur(equipe: Equipe, joueur: Joueur) -> void:
+func _action_de_l_ordinateur(equipe: Equipe, joueur: Joueur) -> String:
 	var but_adverse := Vector3(Dimensions.DEMI_LONGUEUR * float(equipe.sens), 0.0, 0.0)
 	var distance_au_but := joueur.distance_a(but_adverse)
 
 	# A moins de vingt metres et dans un angle raisonnable, on tente sa chance.
 	if distance_au_but < 20.0 and absf(joueur.position.z) < 18.0:
 		_frapper_au_but(equipe, joueur)
-		return
+		return "frappe"
 
 	var receveur := _meilleur_receveur(equipe, joueur)
 	if receveur >= 0:
 		_passer_a(equipe, joueur, equipe.joueurs[receveur])
-		return
+		return "passe"
 
 	_conduire(joueur, _regard(joueur, equipe))
+	return ""
 
 ## Direction dans laquelle le joueur joue : son deplacement s'il court, sinon le
 ## but adverse. Un joueur a l'arret ne frappe pas au hasard.
@@ -376,6 +397,7 @@ func _tenter_tacle(commandes: Commandes, porteur: Vector2i) -> void:
 		return
 
 	var vole := equipes[porteur.x].joueurs[porteur.y]
+	gestes.append({"equipe": equipe_humaine, "rang": joueur_actif, "geste": "tacle"})
 	var rapport := tacleur.defense / maxf(tacleur.defense + vole.dribble, 1.0)
 	if alea.chance(rapport):
 		# Le ballon est degage vers le camp adverse, pas capte proprement : un

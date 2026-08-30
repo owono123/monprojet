@@ -85,7 +85,12 @@ func _batir(tenue: Dictionary, traits: Dictionary) -> void:
 	maillage.name = "Corps"
 	maillage.mesh = _construire_le_maillage(traits)
 	squelette.add_child(maillage)
-	# Le maillage etant enfant direct du squelette, le chemin par defaut suffit.
+	# Le lien vers le squelette doit etre pose explicitement. Un MeshInstance3D
+	# cree par le code naquit avec un chemin VIDE, et non le « .. » que l'editeur
+	# renseigne : sans cette ligne, le maillage n'est relie a aucun squelette et
+	# s'affiche eternellement dans sa pose de repos. Les animations tournaient
+	# bien, elles ne se voyaient simplement nulle part.
+	maillage.skeleton = NodePath("..")
 	maillage.skin = squelette.create_skin_from_rest_transforms()
 	var matiere := ShaderMaterial.new()
 	matiere.shader = load(CHEMIN_SHADER)

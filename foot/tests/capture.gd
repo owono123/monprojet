@@ -69,6 +69,25 @@ func _capturer_toutes_les_vues() -> void:
 		if not await _enregistrer(plan[0]):
 			return
 
+	# Gestes ponctuels. Ils ne surviennent jamais au moment ou l'on prend
+	# l'image, on les declenche donc a la demande, et l'on capture l'image
+	# suivante — soit le milieu du geste, la seule qui montre quelque chose.
+	# Le geste est fige a son instant le plus parlant : laisse libre, il durerait
+	# quatre dixiemes de seconde et serait deja termine quand l'image est prise.
+	for geste in [["13_frappe", "frappe", 0.46], ["14_tacle", "tacle", 0.40]]:
+		var cible: Vector3 = _jeu.position_du_joueur(0, 9)
+		_jeu.fixer_camera(cible + Vector3(3.4, 1.5, 2.4), cible + Vector3(0.0, 0.85, 0.0))
+		await _patienter(IMAGES_ENTRE_VUES)
+		_jeu.jouer_geste(0, 9, geste[1], geste[2], true)
+		# Une image de plus avant de declencher la capture : le signal
+		# process_frame est emis APRES le traitement des noeuds, si bien que
+		# l'image dessinee juste apres porte encore la pose precedente. Le geste
+		# etant fige, attendre ne le fait pas avancer.
+		await _patienter(1)
+		if not await _enregistrer(geste[0]):
+			return
+	_jeu.jouer_geste(0, 9, "", 0.0, false)
+
 	get_tree().quit(0)
 
 func _enregistrer(nom: String) -> bool:

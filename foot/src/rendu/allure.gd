@@ -28,10 +28,72 @@ const BALANCEMENT_EPAULE := 0.42
 const OUVERTURE_BRAS := 0.16      # ecarte les bras du buste
 const FLEXION_COUDE := 0.45
 
+## Duree des gestes ponctuels, en secondes.
+const DUREE_FRAPPE := 0.40
+const DUREE_PASSE := 0.28
+const DUREE_TACLE := 0.85
+
 ## Position dans le cycle de foulee, de 0 a 1. Un cycle vaut deux pas.
 var _phase := 0.0
 ## Balancement lent du corps a l'arret, pour qu'un joueur immobile respire.
 var _repos := 0.0
+
+## Geste ponctuel en cours — frappe, passe ou tacle — et depuis combien de temps.
+## Il se superpose au cycle de course au lieu de le remplacer : un joueur qui
+## frappe en pleine course continue de courir du haut du corps.
+var _geste := ""
+var _depuis := 0.0
+## Fige le geste a l'instant demande au lieu de le laisser se derouler. Sert
+## uniquement aux captures de controle : un geste dure quatre dixiemes de
+## seconde et serait deja termine au moment ou l'image est prise.
+var _fige := false
+
+## Declenche un geste. Appele par l'affichage a partir des evenements que la
+## simulation vient de produire.
+##
+## `avancement` permet de demarrer le geste en cours de route, et `fige` de l'y
+## arreter — deux commodites reservees aux captures.
+func declencher(geste: String, avancement: float = 0.0, fige: bool = false) -> void:
+	_geste = geste
+	_fige = fige
+	_depuis = 0.0
+	_depuis = clampf(avancement, 0.0, 0.999) * _duree_du_geste()
+
+func _duree_du_geste() -> float:
+	match _geste:
+		"frappe": return DUREE_FRAPPE
+		"passe": return DUREE_PASSE
+		"tacle": return DUREE_TACLE
+	return 0.0
+
+## Interpole une suite de reperes [temps, valeur] : la facon la plus lisible de
+## decrire un geste, et la plus facile a regler ensuite.
+static func _entre_reperes(reperes: Array, t: float) -> float:
+	if reperes.is_empty():
+		return 0.0
+	# Les valeurs sont extraites dans des variables typees : un element de
+	# tableau non type est indetermine pour GDScript, qui refuse alors d'inferer
+	# les calculs qu'on en tire.
+	var premier: Array = reperes[0]
+	var instant_premier: float = premier[0]
+	if t <= instant_premier:
+		return premier[1]
+
+	for index in range(1, reperes.size()):
+		var avant: Array = reperes[index - 1]
+		var apres: Array = reperes[index]
+		var instant_avant: float = avant[0]
+		var instant_apres: float = apres[0]
+		if t <= instant_apres:
+			var part := (t - instant_avant) / maxf(instant_apres - instant_avant, 0.0001)
+			var valeur_avant: float = avant[1]
+			var valeur_apres: float = apres[1]
+			# Lissage aux extremites : une interpolation droite donnerait des
+			# ruptures de vitesse visibles a chaque repere.
+			return lerpf(valeur_avant, valeur_apres, smoothstep(0.0, 1.0, part))
+
+	var dernier: Array = reperes[reperes.size() - 1]
+	return dernier[1]
 
 ## Avance le cycle. `distance` est le chemin parcouru au sol depuis la derniere
 ## image, `allure` la vitesse instantanee en metres par seconde.
@@ -39,6 +101,10 @@ func avancer(distance: float, allure: float, delta: float) -> void:
 	var foulee := FOULEE_MINIMALE + allure * FOULEE_PAR_VITESSE
 	_phase = fposmod(_phase + distance / (foulee * 2.0), 1.0)
 	_repos = fposmod(_repos + delta * 0.35, 1.0)
+	if _geste != "" and not _fige:
+		_depuis += delta
+		if _depuis >= _duree_du_geste():
+			_geste = ""
 
 ## Applique la pose au corps. `allure` sert a doser l'amplitude : on marche avec
 ## les memes muscles qu'on sprinte, en plus petit.
@@ -49,6 +115,64 @@ func appliquer(corps: Corps, allure: float) -> void:
 	_poser_les_jambes(corps, angle, allure, vivacite)
 	_poser_les_bras(corps, angle, vivacite)
 	_poser_le_buste(corps, angle, vivacite)
+
+	# Le geste passe par-dessus : il ne remplace que ce dont il a besoin, si bien
+	# qu'un joueur qui frappe en pleine course continue de courir du haut du
+	# corps. C'est ce qui evite l'impression de deux animations qui se coupent.
+	match _geste:
+		"frappe", "passe":
+			_poser_la_frappe(corps, _depuis / _duree_du_geste())
+		"tacle":
+			_poser_le_tacle(corps, _depuis / _duree_du_geste())
+
+## Frappe : armer la jambe vers l'arriere, la lancer, puis l'accompagner.
+##
+## L'essentiel tient dans le decalage entre la cuisse et le genou. Une jambe qui
+## se tend d'un bloc donne un coup de pied de pantin ; c'est le genou qui reste
+## plie pendant l'armement puis se detend au dernier moment qui fait la frappe.
+func _poser_la_frappe(corps: Corps, t: float) -> void:
+	var cuisse := _entre_reperes([
+		[0.00, 0.0], [0.28, 0.80], [0.52, -0.72], [1.00, -0.12]], t)
+	var genou := _entre_reperes([
+		[0.00, 0.2], [0.28, 1.25], [0.48, 0.55], [0.62, 0.05], [1.00, 0.25]], t)
+	var cheville := _entre_reperes([
+		[0.00, 0.0], [0.30, 0.35], [0.55, -0.30], [1.00, 0.0]], t)
+
+	corps.poser_os(Corps.OS_HANCHE_D, Quaternion(Vector3.RIGHT, cuisse))
+	corps.poser_os(Corps.OS_GENOU_D, Quaternion(Vector3.RIGHT, genou))
+	corps.poser_os(Corps.OS_CHEVILLE_D, Quaternion(Vector3.RIGHT, cheville))
+
+	# La jambe d'appui se plie un peu pour encaisser, et le bras oppose part en
+	# arriere pour equilibrer — sans ce contrepoids, le joueur a l'air de frapper
+	# dans le vide.
+	corps.poser_os(Corps.OS_GENOU_G, Quaternion(Vector3.RIGHT,
+		_entre_reperes([[0.0, 0.10], [0.5, 0.42], [1.0, 0.15]], t)))
+	corps.poser_os(Corps.OS_EPAULE_G, Quaternion(Vector3.RIGHT,
+		_entre_reperes([[0.0, 0.0], [0.45, 0.95], [1.0, 0.2]], t))
+		* Quaternion(Vector3.BACK, 0.30))
+	corps.poser_os(Corps.OS_TORSE, Quaternion(Vector3.UP,
+		_entre_reperes([[0.0, 0.0], [0.30, 0.22], [0.60, -0.20], [1.0, 0.0]], t)))
+
+## Tacle glisse : le joueur se laisse tomber sur le cote, jambe tendue devant.
+func _poser_le_tacle(corps: Corps, t: float) -> void:
+	var bascule := _entre_reperes([
+		[0.00, 0.0], [0.22, -1.15], [0.70, -1.25], [1.00, -0.15]], t)
+	var descente := _entre_reperes([
+		[0.00, 0.0], [0.22, -0.62], [0.70, -0.68], [1.00, -0.05]], t)
+
+	# On couche tout le squelette plutot que chaque membre : un tacle est un
+	# mouvement du corps entier, et le detailler os par os ne se verrait pas.
+	corps.squelette.rotation.x = bascule
+	corps.squelette.position.y = descente
+
+	corps.poser_os(Corps.OS_HANCHE_D, Quaternion(Vector3.RIGHT,
+		_entre_reperes([[0.0, 0.0], [0.25, -0.85], [0.75, -0.95], [1.0, -0.1]], t)))
+	corps.poser_os(Corps.OS_GENOU_D, Quaternion(Vector3.RIGHT,
+		_entre_reperes([[0.0, 0.0], [0.30, 0.08], [1.0, 0.2]], t)))
+	corps.poser_os(Corps.OS_HANCHE_G, Quaternion(Vector3.RIGHT,
+		_entre_reperes([[0.0, 0.0], [0.30, 0.55], [1.0, 0.1]], t)))
+	corps.poser_os(Corps.OS_GENOU_G, Quaternion(Vector3.RIGHT,
+		_entre_reperes([[0.0, 0.0], [0.30, 1.05], [1.0, 0.2]], t)))
 
 func _poser_les_jambes(corps: Corps, angle: float, allure: float, vivacite: float) -> void:
 	var amplitude := BALANCEMENT_HANCHE + allure * BALANCEMENT_HANCHE_PAR_VITESSE
@@ -115,3 +239,7 @@ func _poser_le_buste(corps: Corps, angle: float, vivacite: float) -> void:
 	var rebond := absf(sin(angle)) * 0.035 * vivacite
 	var respiration := sin(_repos * TAU) * 0.006 * (1.0 - vivacite)
 	corps.squelette.position.y = rebond + respiration
+	# Remise a plat systematique : le tacle couche le squelette entier, et sans
+	# ce retour a zero le joueur resterait penche en arriere pour le reste du
+	# match une fois le geste termine.
+	corps.squelette.rotation.x = 0.0

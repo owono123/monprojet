@@ -79,6 +79,7 @@ func _process(delta: float) -> void:
 	while _accumulateur >= Simulation.PAS and pas_effectues < PAS_MAXI_PAR_IMAGE:
 		_memoriser_positions()
 		_simulation.simuler(_commandes_de_l_image())
+		_declencher_les_gestes()
 		_accumulateur -= Simulation.PAS
 		pas_effectues += 1
 	if pas_effectues == PAS_MAXI_PAR_IMAGE:
@@ -115,6 +116,17 @@ func _commandes_de_l_image() -> Commandes:
 	var monde := avant * (-commandes.direction.y) + droite * commandes.direction.x
 	commandes.direction = Vector2(monde.x, monde.z)
 	return commandes
+
+## Transforme les gestes que la simulation vient de signaler en animations.
+##
+## La liste est lue juste apres chaque pas simule, et non une fois par image :
+## quand l'appareil rame et que deux pas s'enchainent dans la meme image, une
+## frappe survenue au premier pas serait sinon effacee par le second.
+func _declencher_les_gestes() -> void:
+	for evenement in _simulation.gestes:
+		var index: int = int(evenement["equipe"]) * JOUEURS_PAR_EQUIPE + int(evenement["rang"])
+		if index >= 0 and index < _allures.size():
+			_allures[index].declencher(evenement["geste"])
 
 func _memoriser_positions() -> void:
 	_ballon_precedent = _simulation.ballon.position
@@ -184,6 +196,18 @@ func position_du_joueur(numero_equipe: int, rang: int) -> Vector3:
 	if index < 0 or index >= _corps.size():
 		return Vector3.ZERO
 	return _corps[index].position
+
+## Declenche un geste sur un joueur donne, sans passer par la simulation.
+##
+## Reserve aux captures de controle : une frappe ou un tacle ne survient que
+## rarement et jamais au moment ou l'on prend l'image, ce qui rendrait ces
+## animations impossibles a relire sans telephone sous la main. Le jeu lui-meme
+## n'appelle jamais cette fonction — ses gestes viennent tous de la simulation.
+func jouer_geste(numero_equipe: int, rang: int, geste: String,
+		avancement: float = 0.0, fige: bool = false) -> void:
+	var index := numero_equipe * JOUEURS_PAR_EQUIPE + rang
+	if index >= 0 and index < _allures.size():
+		_allures[index].declencher(geste, avancement, fige)
 
 ## Fige la camera a un endroit precis et coupe le suivi automatique. Utilise par
 ## les captures de controle, et base de la camera libre des replays.
