@@ -74,7 +74,8 @@ func _capturer_toutes_les_vues() -> void:
 	# suivante — soit le milieu du geste, la seule qui montre quelque chose.
 	# Le geste est fige a son instant le plus parlant : laisse libre, il durerait
 	# quatre dixiemes de seconde et serait deja termine quand l'image est prise.
-	for geste in [["13_frappe", "frappe", 0.46], ["14_tacle", "tacle", 0.40]]:
+	for geste in [["13_frappe", "frappe", 0.46], ["14_tacle", "tacle", 0.40],
+			["15_celebration", "celebration", 0.55]]:
 		var cible: Vector3 = _jeu.position_du_joueur(0, 9)
 		_jeu.fixer_camera(cible + Vector3(3.4, 1.5, 2.4), cible + Vector3(0.0, 0.85, 0.0))
 		await _patienter(IMAGES_ENTRE_VUES)

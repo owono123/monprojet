@@ -32,6 +32,7 @@ const FLEXION_COUDE := 0.45
 const DUREE_FRAPPE := 0.40
 const DUREE_PASSE := 0.28
 const DUREE_TACLE := 0.85
+const DUREE_CELEBRATION := 2.40
 
 ## Position dans le cycle de foulee, de 0 a 1. Un cycle vaut deux pas.
 var _phase := 0.0
@@ -64,6 +65,7 @@ func _duree_du_geste() -> float:
 		"frappe": return DUREE_FRAPPE
 		"passe": return DUREE_PASSE
 		"tacle": return DUREE_TACLE
+		"celebration": return DUREE_CELEBRATION
 	return 0.0
 
 ## Interpole une suite de reperes [temps, valeur] : la facon la plus lisible de
@@ -124,6 +126,8 @@ func appliquer(corps: Corps, allure: float) -> void:
 			_poser_la_frappe(corps, _depuis / _duree_du_geste())
 		"tacle":
 			_poser_le_tacle(corps, _depuis / _duree_du_geste())
+		"celebration":
+			_poser_la_celebration(corps, _depuis / _duree_du_geste())
 
 ## Frappe : armer la jambe vers l'arriere, la lancer, puis l'accompagner.
 ##
@@ -152,6 +156,28 @@ func _poser_la_frappe(corps: Corps, t: float) -> void:
 		* Quaternion(Vector3.BACK, 0.30))
 	corps.poser_os(Corps.OS_TORSE, Quaternion(Vector3.UP,
 		_entre_reperes([[0.0, 0.0], [0.30, 0.22], [0.60, -0.20], [1.0, 0.0]], t)))
+
+## Celebration : bras leves, tete en arriere, petits bonds.
+##
+## Le geste dure plus de deux secondes et se repete : c'est le seul moment ou la
+## camera s'approche assez pour qu'on voie un visage, et il ne doit donc pas
+## etre expedie.
+func _poser_la_celebration(corps: Corps, t: float) -> void:
+	var levee := _entre_reperes([[0.0, 0.0], [0.18, 1.0], [0.85, 1.0], [1.0, 0.3]], t)
+	# Les bras montent sur les cotes plutot que droit devant : c'est le geste du
+	# joueur qui court vers la tribune, pas celui qui demande le ballon.
+	for cote in [0, 1]:
+		var signe := 1.0 if cote == 0 else -1.0
+		var epaule := Corps.OS_EPAULE_G if cote == 0 else Corps.OS_EPAULE_D
+		var coude := Corps.OS_COUDE_G if cote == 0 else Corps.OS_COUDE_D
+		corps.poser_os(epaule, Quaternion(Vector3.RIGHT, -0.35 * levee)
+			* Quaternion(Vector3.BACK, signe * (0.16 + 2.15 * levee)))
+		corps.poser_os(coude, Quaternion(Vector3.RIGHT, 0.35 - 0.20 * levee))
+
+	corps.poser_os(Corps.OS_TETE, Quaternion(Vector3.RIGHT, -0.28 * levee))
+	corps.poser_os(Corps.OS_TORSE, Quaternion(Vector3.RIGHT, -0.16 * levee))
+	# Trois petits bonds pendant la celebration.
+	corps.squelette.position.y = maxf(sin(t * PI * 6.0), 0.0) * 0.10 * levee
 
 ## Tacle glisse : le joueur se laisse tomber sur le cote, jambe tendue devant.
 func _poser_le_tacle(corps: Corps, t: float) -> void:

@@ -13,6 +13,18 @@ extends Node3D
 const PAS_MAXI_PAR_IMAGE := 5   # garde-fou : au-dela, on laisse filer le temps
 const JOUEURS_PAR_EQUIPE := 11
 
+## Ce que la scene est en train de montrer.
+##
+## Un but enchaine trois temps : la celebration, camera sur le buteur, puis le
+## ralenti de l'action, puis l'engagement. La simulation est mise en pause
+## pendant les deux premiers — sans cela le jeu reprendrait pendant qu'on
+## regarde le but, et l'on raterait la remise en jeu.
+enum { JEU, CELEBRATION, REJEU }
+
+const DUREE_CELEBRATION := 2.4
+const SECONDES_DE_RALENTI := 4.5
+const LENTEUR_DU_RALENTI := 0.45
+
 var _simulation: Simulation
 var _manette: Manette
 var _terrain: Terrain
@@ -37,6 +49,12 @@ var _ballon_precedent := Vector3.ZERO
 var _positions_precedentes: PackedVector3Array = PackedVector3Array()
 var _orientation_ballon := Basis.IDENTITY
 var _camera_libre := false
+
+var _mode := JEU
+var _temps_de_mode := 0.0
+var _image_rejeu := 0.0
+var _rejeu := Rejeu.new()
+var _score_precedent := Vector2i.ZERO
 
 func _ready() -> void:
 	_simulation = Simulation.new(2026)
@@ -74,12 +92,22 @@ func _ready() -> void:
 	interface.add_child(Compteur.new())
 
 func _process(delta: float) -> void:
+	match _mode:
+		CELEBRATION:
+			_avancer_la_celebration(delta)
+		REJEU:
+			_avancer_le_ralenti(delta)
+		_:
+			_avancer_le_jeu(delta)
+
+func _avancer_le_jeu(delta: float) -> void:
 	_accumulateur += delta
 	var pas_effectues := 0
 	while _accumulateur >= Simulation.PAS and pas_effectues < PAS_MAXI_PAR_IMAGE:
 		_memoriser_positions()
 		_simulation.simuler(_commandes_de_l_image())
 		_declencher_les_gestes()
+		_rejeu.enregistrer(_simulation)
 		_accumulateur -= Simulation.PAS
 		pas_effectues += 1
 	if pas_effectues == PAS_MAXI_PAR_IMAGE:
@@ -88,6 +116,84 @@ func _process(delta: float) -> void:
 		_accumulateur = 0.0
 
 	_afficher(clampf(_accumulateur / Simulation.PAS, 0.0, 1.0), delta)
+	_guetter_le_but()
+
+## Un but vient-il d'etre inscrit ? On compare le score plutot que d'ecouter un
+## signal : la simulation n'a pas a connaitre l'existence d'une camera.
+func _guetter_le_but() -> void:
+	var score := Vector2i(_simulation.etat.buts_domicile, _simulation.etat.buts_exterieur)
+	if score == _score_precedent:
+		return
+	_score_precedent = score
+	_mode = CELEBRATION
+	_temps_de_mode = 0.0
+	var buteur := _simulation.buteur
+	if buteur.x >= 0:
+		jouer_geste(buteur.x, buteur.y, "celebration")
+
+func _avancer_la_celebration(delta: float) -> void:
+	_temps_de_mode += delta
+	# La simulation est en pause : les corps restent ou le but les a laisses.
+	_afficher(1.0, delta)
+	_cadrer_le_buteur()
+	if _temps_de_mode >= DUREE_CELEBRATION:
+		_mode = REJEU
+		_temps_de_mode = 0.0
+		# Le ralenti part de quelques secondes avant le but, pas de la plus
+		# vieille image gardee : on veut l'action, pas le milieu de terrain.
+		var recul := int(SECONDES_DE_RALENTI * Simulation.IMAGES_PAR_SECONDE)
+		_image_rejeu = float(maxi(_rejeu.disponibles() - recul, 0))
+
+func _avancer_le_ralenti(delta: float) -> void:
+	_temps_de_mode += delta
+	_image_rejeu += delta * float(Simulation.IMAGES_PAR_SECONDE) * LENTEUR_DU_RALENTI
+	var derniere := _rejeu.disponibles() - 1
+	if _image_rejeu >= float(derniere) or derniere <= 0:
+		_mode = JEU
+		_accumulateur = 0.0
+		return
+
+	var image := int(_image_rejeu)
+	_ballon_visuel.position = _rejeu.ballon_a(image)
+	_faire_rouler_ballon(delta)
+	for index in _corps.size():
+		var etat_joueur := _rejeu.joueur_a(image, index)
+		var corps := _corps[index]
+		corps.position = etat_joueur["position"]
+		corps.rotation.y = etat_joueur["orientation"]
+		var allure: float = etat_joueur["allure"]
+		_allures[index].avancer(allure * delta * LENTEUR_DU_RALENTI, allure, delta)
+		_allures[index].appliquer(corps, allure)
+
+	_mettre_a_jour_le_tableau()
+	_cadrer_le_ralenti(delta)
+
+## Camera de celebration : rapprochee et un peu en contre-plongee, comme une
+## camera de bord de terrain. C'est le seul moment du match ou l'on voit un
+## visage.
+func _cadrer_le_buteur() -> void:
+	var buteur := _simulation.buteur
+	if buteur.x < 0:
+		return
+	var corps := _corps[buteur.x * JOUEURS_PAR_EQUIPE + buteur.y]
+	var devant := Vector3(sin(corps.rotation.y), 0.0, cos(corps.rotation.y))
+	var vise := corps.position + Vector3(0.0, 1.45, 0.0)
+	# La camera tourne lentement autour du joueur pendant la celebration.
+	var angle := _temps_de_mode * 0.55
+	var recul := devant.rotated(Vector3.UP, angle) * 2.9
+	_camera.position = corps.position + recul + Vector3(0.0, 1.75, 0.0)
+	if _camera.position.distance_squared_to(vise) > 0.01:
+		_camera.look_at(vise, Vector3.UP)
+
+## Camera de ralenti : elle tourne autour de l'action au lieu de la suivre de
+## cote, ce qui fait tout l'interet d'un ralenti par rapport a une redif.
+func _cadrer_le_ralenti(delta: float) -> void:
+	var cible := _ballon_visuel.position + Vector3(0.0, 0.9, 0.0)
+	var angle := _temps_de_mode * 0.32
+	var souhaitee := cible + Vector3(sin(angle) * 13.0, 6.5, cos(angle) * 13.0)
+	_camera.position = _camera.position.lerp(souhaitee, 1.0 - pow(0.02, delta))
+	if _camera.position.distance_squared_to(cible) > 0.01:
+		_camera.look_at(cible, Vector3.UP)
 
 ## Traduit les commandes de la manette du repere de l'ecran vers celui du
 ## terrain.
@@ -175,6 +281,8 @@ func _mettre_a_jour_le_tableau() -> void:
 	# Ce qui vient d'etre siffle, sous le score. Sans ce mot, une touche ou un
 	# corner ressemblent a un ballon qui s'arrete tout seul.
 	var arret := _simulation.libelle_de_l_arret()
+	if _mode == REJEU:
+		arret = "Ralenti"
 	_tableau.text += "" if arret.is_empty() else "\n%s" % arret.to_upper()
 
 ## Fait tourner le ballon selon son deplacement. C'est purement visuel : la

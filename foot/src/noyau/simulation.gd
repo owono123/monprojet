@@ -50,6 +50,11 @@ var joueur_actif := 10
 ## affiches sont ceux du porteur ou ceux du defenseur.
 var porteur := Vector2i(-1, -1)
 
+## Dernier joueur a avoir touche le ballon, et auteur du dernier but. Servent a
+## l'affichage : c'est sur lui que la camera se braque pour la celebration.
+var dernier_toucheur_joueur := Vector2i(-1, -1)
+var buteur := Vector2i(-1, -1)
+
 ## Gestes survenus pendant l'image qui vient d'etre simulee : frappes, tacles.
 ##
 ## C'est de l'information a sens unique, du noyau vers l'affichage. La
@@ -243,6 +248,7 @@ func _jouer_le_ballon(commandes: Commandes, porteur: Vector2i) -> void:
 		_hors_jeu_en_attente = Vector2i(-1, -1)
 
 	_dernier_toucheur = porteur.x
+	dernier_toucheur_joueur = porteur
 
 	var geste := ""
 	if porteur.x == equipe_humaine and porteur.y == joueur_actif:
@@ -494,6 +500,11 @@ func _arbitrer() -> void:
 			_preparer_la_remise_en_jeu(decision)
 
 func _accorder_le_but(marqueur: int) -> void:
+	# Le buteur est le dernier joueur a avoir touche le ballon, s'il est bien de
+	# l'equipe qui marque — sinon c'est un but contre son camp, et l'on preferera
+	# braquer la camera sur un attaquant plutot que sur le malheureux.
+	buteur = dernier_toucheur_joueur if dernier_toucheur_joueur.x == marqueur \
+		else Vector2i(marqueur, equipes[marqueur].le_plus_proche(ballon.position))
 	etat.marquer(marqueur == 0)
 	_equipe_qui_a_encaisse = 1 - marqueur
 	etat.phase = EtatMatch.ARRETEE
