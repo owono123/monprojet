@@ -18,6 +18,8 @@ var _vues := [
 	["02_but", Vector3(34.0, 7.0, -24.0), Vector3(52.5, 1.0, 0.0)],
 	["03_vue_entiere", Vector3(0.0, 64.0, -48.0), Vector3(0.0, 0.0, 0.0)],
 	["04_rond_central", Vector3(-5.0, 2.0, -11.0), Vector3(0.0, 0.3, 0.0)],
+	["11_stade", Vector3(0.0, 34.0, -96.0), Vector3(0.0, 6.0, 0.0)],
+	["12_tribune", Vector3(-14.0, 6.5, -52.0), Vector3(-40.0, 12.0, -62.0)],
 ]
 
 ## Vues rapprochees, visant un joueur precis plutot qu'un point du terrain :

@@ -16,6 +16,7 @@ const JOUEURS_PAR_EQUIPE := 11
 var _simulation: Simulation
 var _manette: Manette
 var _terrain: Terrain
+var _stade: Stade
 var _ambiance: Ambiance
 var _camera: Camera3D
 var _ballon_visuel: MeshInstance3D
@@ -46,6 +47,9 @@ func _ready() -> void:
 
 	_terrain = Terrain.new()
 	add_child(_terrain)
+
+	_stade = Stade.new()
+	add_child(_stade)
 
 	_ballon_visuel = _construire_ballon()
 	add_child(_ballon_visuel)
